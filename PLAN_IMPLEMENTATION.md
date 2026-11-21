@@ -1,4 +1,4 @@
-# Plan d'implémentation — Skema (révisé le 13/11/2026, stack « quasi tout Google »)
+# Plan d'implémentation — Skema (révisé le 21/11/2026, stack « quasi tout Google » + support polycopiés 300+ pages)
 
 Ce plan reprend l'architecture de `Architecture PWA Révision Vidéo IA.md`, avec les corrections issues de la vérification et le passage à Google partout où c'est pertinent.
 
@@ -68,7 +68,9 @@ Ne sont testées **que** les briques de la stack retenue. Chaque test a des seui
 1. Monorepo pnpm : `apps/web` (Next.js App Router, TS strict, Tailwind) et `services/gcp-worker` (Python, Cloud Run).
 2. Dépendances web : `drizzle-orm`, `@neondatabase/serverless`, `drizzle-kit`, `@aws-sdk/client-s3`, `@aws-sdk/s3-request-presigner`, `zod`, `framer-motion`, `@trigger.dev/sdk`, `@serwist/next`, `@google/genai`, `better-auth`.
 3. `apps/web/src/lib/db/schema.ts` : les 6 tables d'origine, avec :
-   - `concepts.diagram_ids UUID[]` ;
+   - table **`chapters`** (`course_id`, `title`, `order_index`, `page_start`, `page_end`, `status`) pour découper les polycopiés de 100–350+ pages par chapitre ;
+   - `concepts.chapter_id` (référence `chapters.id`) et `concepts.diagram_ids UUID[]` ;
+   - `course_diagrams.chapter_id` (optionnel) et `page_number` ;
    - `episodes.youtube_video_id` **sans** clé étrangère vers le cache, pour que la purge à 30 jours soit possible ;
    - `episodes.status`, `episodes.model_used`, `episodes.tts_voice`, `episodes.cost_usd` ;
    - tables Better Auth, avec `courses.user_id` qui y fait référence ;
@@ -84,16 +86,16 @@ Ne sont testées **que** les briques de la stack retenue. Chaque test a des seui
 
 ## Phase 1 — Worker Cloud Run et ingestion
 
-1. `services/gcp-worker/main.py` (FastAPI + PyMuPDF + Pillow + ffmpeg dans l'image, en-tête `X-Worker-Secret`, port 8080, compte de service attaché) :
-   - `POST /split-and-inspect` : découpe au-delà de 50 Mo ou 1 000 pages ;
+1. `services/gcp-worker/main.py` (FastAPI + PyMuPDF + Pillow + ffmpeg dans l'image, en-tête `X-Worker-Secret`, port 8080, **1 à 2 Go de RAM** sur Cloud Run pour gérer les polycopiés de 120+ Mo en streaming R2 → `/tmp`, compte de service attaché) :
+   - `POST /split-and-inspect` : lit le PDF depuis R2, extrait la structure des chapitres (signets/sommaire PDF ou détection des pages de début de chapitre) et **découpe systématiquement tout PDF > 30 pages en lots de 25–30 pages** (< 40 Mo, pour préserver la précision de Gemini Vision et éviter les troncatures JSON) ;
    - `POST /crop-bboxes` : rendu 200 DPI, marge de 4 %, WebP de moins de 100 Ko, avec les métriques `cut_text` de S.2 renvoyées pour signaler une légende coupée ;
    - `POST /pptx-to-pdf` (LibreOffice headless) ;
    - `POST /tts` : voir phase 2 (l'auth Google TTS reste dans Cloud Run).
-2. Routes `POST /api/courses/upload-url` et `POST /api/courses/ingest`.
-3. `trigger/ingest-course.ts` : PDF → Gemini Vision (boîtes 0..1000) → `/crop-bboxes` → WebP sur R2 → `course_diagrams`. Branche `PDF_EXTRACTOR=mistral` gardée comme repli.
-4. Découpage en 8 à 25 concepts (modèle QUALITY, sortie Zod) avec `diagram_ids`, puis `batchTrigger` des moteurs 2 et 1.
+2. Routes `POST /api/courses/upload-url` (upload navigateur → R2 direct, supporte 120+ Mo sans passer par Vercel), `POST /api/courses/ingest` (structure + chapitres), et `POST /api/chapters/[id]/generate` (lancement **à la demande** par chapitre).
+3. `trigger/ingest-course.ts` (ingestion légère à l'upload) : appelle `/split-and-inspect`, crée les entrées `chapters` en base (sans encore lancer la génération des capsules sur toute l'UE).
+4. `trigger/ingest-chapter.ts` (déclenché à la demande sur le chapitre choisi) : pour chaque lot de 25–30 pages du chapitre (en parallèle, avec `concurrencyLimit`), Gemini Vision (boîtes 0..1000) → `/crop-bboxes` → WebP sur R2 → `course_diagrams` ; puis découpage du chapitre en **8 à 20 concepts** (modèle QUALITY, sortie Zod) avec `diagram_ids`, et `batchTrigger` des moteurs 2 et 1 uniquement pour ce chapitre. Branche `PDF_EXTRACTOR=mistral` gardée comme repli.
 
-**Terminé quand** : PDF de 20 à 40 diapositives → WebP nets, `cut_text_ratio` sous le seuil de S.2.
+**Terminé quand** : un polycopié de 300+ pages est découpé en chapitres à l'upload, et la génération d'un chapitre de 20 à 35 pages produit des WebP nets (`cut_text_ratio` sous le seuil de S.2) et ses concepts en base.
 
 ---
 

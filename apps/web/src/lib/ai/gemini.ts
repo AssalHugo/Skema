@@ -68,6 +68,7 @@ export interface UsageContext {
   /** Nom de la tâche pour `ai_usage.task`, ex. "ingest.concepts". */
   task: string;
   courseId?: string;
+  chapterId?: string;
   episodeId?: string;
   metadata?: Record<string, unknown>;
 }
@@ -91,6 +92,7 @@ export async function logGeminiUsage(
       ...tokens,
       costUsd,
       courseId: ctx.courseId,
+      chapterId: ctx.chapterId,
       episodeId: ctx.episodeId,
       metadata: { ...ctx.metadata, totalTokenCount: usage?.totalTokenCount },
     });
