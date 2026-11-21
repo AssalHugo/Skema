@@ -1,0 +1,7 @@
+.env
+.venv/
+out/
+inputs/
+__pycache__/
+*.key.json
+gcp-*.json

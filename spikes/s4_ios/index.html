@@ -1,0 +1,143 @@
+<!doctype html>
+<html lang="fr">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<title>Skema — S.4 Audio iOS</title>
+<style>
+  :root { --bg:#0b0b0f; --fg:#f2f2f2; --muted:#9a9aa5; --accent:#ffd54a; }
+  * { box-sizing:border-box; }
+  html,body { margin:0; height:100%; background:var(--bg); color:var(--fg); font:15px system-ui,-apple-system,sans-serif; }
+  #feed { height:100dvh; width:100%; overflow-y:scroll; scroll-snap-type:y mandatory; overscroll-behavior-y:contain; }
+  .card { height:100dvh; scroll-snap-align:start; scroll-snap-stop:always; position:relative;
+          display:flex; flex-direction:column; justify-content:center; align-items:center; padding:16px; gap:12px; }
+  .card h2 { margin:0; font-size:18px; }
+  .yt { width:100%; aspect-ratio:9/16; max-height:70dvh; background:#000; }
+  .yt iframe { width:100%; height:100%; }
+  .tag { color:var(--muted); font-size:13px; }
+  button { font:inherit; padding:12px 18px; border-radius:12px; border:0; background:var(--accent); color:#000; font-weight:600; }
+  #start { position:fixed; inset:0; z-index:10; display:flex; flex-direction:column; gap:16px; align-items:center;
+           justify-content:center; background:var(--bg); padding:16px; text-align:center; }
+  #log { position:fixed; left:0; right:0; bottom:0; max-height:28dvh; overflow:auto; z-index:5; margin:0;
+         padding:8px 16px calc(8px + env(safe-area-inset-bottom)); background:rgba(0,0,0,.8); font:11px ui-monospace,monospace; color:#b5f5b5; }
+  .unmute { display:none; }
+</style>
+</head>
+<body>
+<div id="start">
+  <h1>Skema — Test audio iOS (S.4)</h1>
+  <p class="tag">Un tap ici débloque l'audio. Ensuite, swipe entre les cartes sans toucher l'écran autrement, puis note ce que dit le journal en bas.</p>
+  <button id="go">Lancer la session</button>
+</div>
+<div id="feed"></div>
+<pre id="log"></pre>
+<audio id="shared" playsinline preload="auto"></audio>
+
+<script>
+const params = new URLSearchParams(location.search);
+// IDs YouTube remplaçables via ?yt=ID1,ID2 (vidéos publiques intégrables)
+const ytIds = (params.get('yt') || 'M7lc1UVf-VE,aqz-KE-bpKQ').split(',');
+const cards = [
+  { type:'audio', label:'Capsule générée A', freq:440 },
+  { type:'yt', id:ytIds[0], start:10, end:40 },
+  { type:'audio', label:'Capsule générée B', freq:660 },
+  { type:'yt', id:ytIds[1] || ytIds[0], start:30, end:60 },
+  { type:'audio', label:'Capsule générée C', freq:550 },
+];
+const logEl = document.getElementById('log');
+const log = (m) => { const t = new Date().toISOString().slice(11,19); logEl.textContent = `${t} ${m}\n` + logEl.textContent; };
+log(navigator.userAgent);
+
+// Génère un WAV (bips) pour éviter tout fichier externe
+function toneUrl(freq, seconds = 20) {
+  const sr = 22050, n = sr * seconds, buf = new ArrayBuffer(44 + n * 2), v = new DataView(buf);
+  const w = (o, s) => [...s].forEach((c, i) => v.setUint8(o + i, c.charCodeAt(0)));
+  w(0,'RIFF'); v.setUint32(4, 36 + n*2, true); w(8,'WAVEfmt '); v.setUint32(16,16,true); v.setUint16(20,1,true);
+  v.setUint16(22,1,true); v.setUint32(24,sr,true); v.setUint32(28,sr*2,true); v.setUint16(32,2,true); v.setUint16(34,16,true);
+  w(36,'data'); v.setUint32(40, n*2, true);
+  for (let i = 0; i < n; i++) { const on = (i / sr) % 1 < 0.3; v.setInt16(44 + i*2, on ? Math.sin(2*Math.PI*freq*i/sr) * 8000 : 0, true); }
+  return URL.createObjectURL(new Blob([buf], { type:'audio/wav' }));
+}
+
+const feed = document.getElementById('feed');
+const shared = document.getElementById('shared');
+const players = {};
+cards.forEach((c, i) => {
+  const el = document.createElement('section');
+  el.className = 'card'; el.dataset.i = i;
+  if (c.type === 'audio') {
+    c.url = toneUrl(c.freq);
+    el.innerHTML = `<h2>${c.label}</h2><p class="tag">&lt;audio&gt; partagé, ${c.freq} Hz</p>`;
+  } else {
+    el.innerHTML = `<h2>YouTube ${c.id}</h2><p class="tag">segment ${c.start}s → ${c.end}s</p>
+      <div class="yt"><div id="yt${i}"></div></div><button class="unmute">Activer le son</button>`;
+  }
+  feed.appendChild(el);
+});
+
+// API IFrame YouTube
+window.onYouTubeIframeAPIReady = () => {
+  cards.forEach((c, i) => {
+    if (c.type !== 'yt') return;
+    players[i] = new YT.Player(`yt${i}`, {
+      videoId: c.id,
+      playerVars: { playsinline:1, controls:0, rel:0, start:c.start, end:c.end, modestbranding:1 },
+      events: {
+        onReady: () => log(`yt${i} prêt`),
+        onStateChange: (e) => log(`yt${i} état=${e.data} muet=${players[i].isMuted()}`),
+        onError: (e) => log(`yt${i} ERREUR ${e.data} (101/150 = intégration bloquée)`),
+      },
+    });
+    setInterval(() => { // bouclage strict sur le segment
+      const p = players[i];
+      if (p?.getCurrentTime && p.getPlayerState() === 1 && p.getCurrentTime() >= c.end) p.seekTo(c.start, true);
+    }, 250);
+  });
+};
+const s = document.createElement('script'); s.src = 'https://www.youtube.com/iframe_api'; document.head.appendChild(s);
+
+let active = -1, started = false;
+function activate(i) {
+  if (i === active || !started) return;
+  // Pause de l'ancienne carte
+  if (active >= 0) {
+    if (cards[active].type === 'audio') shared.pause();
+    else players[active]?.pauseVideo?.();
+  }
+  active = i;
+  const c = cards[i];
+  if (c.type === 'audio') {
+    shared.src = c.url; shared.currentTime = 0;
+    shared.play().then(() => log(`audio ${i} OK (son)`)).catch(e => log(`audio ${i} BLOQUÉ: ${e.name}`));
+  } else {
+    const p = players[i];
+    if (!p?.playVideo) return log(`yt${i} pas encore prêt`);
+    p.unMute(); p.seekTo(c.start, true); p.playVideo();
+    setTimeout(() => {
+      const st = p.getPlayerState(), muted = p.isMuted();
+      log(`yt${i} après swipe : état=${st} (1=lecture) muet=${muted}`);
+      const btn = document.querySelector(`[data-i="${i}"] .unmute`);
+      if (st !== 1 || muted) {
+        btn.style.display = 'block';
+        btn.onclick = () => { p.unMute(); p.playVideo(); log(`yt${i} relancé par tap`); btn.style.display = 'none'; };
+      }
+    }, 1500);
+  }
+}
+
+const io = new IntersectionObserver((entries) => {
+  entries.forEach(e => { if (e.isIntersecting) activate(+e.target.dataset.i); });
+}, { root: feed, threshold: 0.75 });
+document.querySelectorAll('.card').forEach(el => io.observe(el));
+
+document.getElementById('go').onclick = async () => {
+  // Déverrouillage iOS : lecture déclenchée par le geste utilisateur
+  shared.src = cards[0].url;
+  try { await shared.play(); log('déverrouillage <audio> OK'); } catch (e) { log('déverrouillage ÉCHEC ' + e.name); }
+  document.getElementById('start').remove();
+  started = true; active = -1; activate(0);
+};
+</script>
+</body>
+</html>

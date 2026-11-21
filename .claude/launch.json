@@ -1,0 +1,11 @@
+{
+  "version": "0.0.1",
+  "configurations": [
+    {
+      "name": "s4-ios",
+      "runtimeExecutable": "python",
+      "runtimeArgs": ["-m", "http.server", "8765", "--bind", "0.0.0.0", "--directory", "spikes/s4_ios"],
+      "port": 8765
+    }
+  ]
+}
