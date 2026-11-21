@@ -14,7 +14,13 @@ import shutil
 
 from fastapi import Depends, FastAPI, Header, HTTPException, status
 
-app = FastAPI(title="skema-gcp-worker", version="0.1.0", docs_url=None, redoc_url=None)
+app = FastAPI(
+    title="skema-gcp-worker",
+    version="0.1.0",
+    docs_url=None,
+    redoc_url=None,
+    openapi_url=None,
+)
 
 
 def _secret() -> str:

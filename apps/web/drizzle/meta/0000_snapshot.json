@@ -1,5 +1,5 @@
 {
-  "id": "ab5840e0-948c-4cad-832e-27a17fc42835",
+  "id": "1f2c4a4e-9888-4a5d-92af-b9f922173344",
   "prevId": "00000000-0000-0000-0000-000000000000",
   "version": "7",
   "dialect": "postgresql",
@@ -506,7 +506,8 @@
           "name": "page_count",
           "type": "integer",
           "primaryKey": false,
-          "notNull": true
+          "notNull": true,
+          "default": 0
         },
         "status": {
           "name": "status",
@@ -610,7 +611,7 @@
           "name": "duration_sec",
           "type": "real",
           "primaryKey": false,
-          "notNull": true
+          "notNull": false
         },
         "audio_r2_key": {
           "name": "audio_r2_key",

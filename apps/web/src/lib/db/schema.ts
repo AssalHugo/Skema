@@ -125,7 +125,7 @@ export const courses = pgTable(
     title: text("title").notNull(),
     discipline: text("discipline").default("biologie"),
     sourceR2Key: text("source_r2_key").notNull(),
-    pageCount: integer("page_count").notNull(),
+    pageCount: integer("page_count").notNull().default(0),
     status: courseStatus("status").notNull().default("processing"),
     createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
   },
@@ -200,7 +200,7 @@ export const episodes = pgTable(
     engineType: engineType("engine_type").notNull(),
     status: episodeStatus("status").notNull().default("pending"),
     title: text("title").notNull(),
-    durationSec: real("duration_sec").notNull(),
+    durationSec: real("duration_sec"),
     audioR2Key: text("audio_r2_key"),
     storyboardJson: jsonb("storyboard_json"),
     // Volontairement SANS clé étrangère vers youtube_videos_cache : la purge à

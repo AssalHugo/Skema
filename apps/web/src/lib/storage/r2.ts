@@ -94,13 +94,22 @@ export function getPublicAssetUrl(key: string): string {
   return `${base}/${path}`;
 }
 
+function sanitizeSegment(segment: string, fallback: string): string {
+  return (
+    segment
+      .normalize("NFKD")
+      .replace(/[\u0300-\u036f]/g, "")
+      .replace(/[^a-zA-Z0-9._-]+/g, "-")
+      .replace(/\.{2,}/g, ".")
+      .replace(/^-+|-+$/g, "")
+      .slice(0, 120) || fallback
+  );
+}
+
 /** Clé R2 normalisée : `<préfixe>/<userId>/<uuid>-<nom-assaini>`. */
 export function buildObjectKey(prefix: string, userId: string, filename: string): string {
-  const safe = filename
-    .normalize("NFKD")
-    .replace(/[̀-ͯ]/g, "")
-    .replace(/[^a-zA-Z0-9._-]+/g, "-")
-    .replace(/^-+|-+$/g, "")
-    .slice(0, 120) || "fichier";
-  return `${prefix}/${userId}/${crypto.randomUUID()}-${safe}`;
+  const safePrefix = sanitizeSegment(prefix, "assets");
+  const safeUser = sanitizeSegment(userId, "anon");
+  const safeFile = sanitizeSegment(filename, "fichier");
+  return `${safePrefix}/${safeUser}/${crypto.randomUUID()}-${safeFile}`;
 }

@@ -63,7 +63,7 @@ CREATE TABLE "courses" (
 	"title" text NOT NULL,
 	"discipline" text DEFAULT 'biologie',
 	"source_r2_key" text NOT NULL,
-	"page_count" integer NOT NULL,
+	"page_count" integer DEFAULT 0 NOT NULL,
 	"status" "course_status" DEFAULT 'processing' NOT NULL,
 	"created_at" timestamp with time zone DEFAULT now() NOT NULL
 );
@@ -75,7 +75,7 @@ CREATE TABLE "episodes" (
 	"engine_type" "engine_type" NOT NULL,
 	"status" "episode_status" DEFAULT 'pending' NOT NULL,
 	"title" text NOT NULL,
-	"duration_sec" real NOT NULL,
+	"duration_sec" real,
 	"audio_r2_key" text,
 	"storyboard_json" jsonb,
 	"youtube_video_id" text,

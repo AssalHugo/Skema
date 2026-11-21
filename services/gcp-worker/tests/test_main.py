@@ -22,3 +22,8 @@ def test_protected_route_requires_secret(monkeypatch):
 def test_weak_secret_is_refused(monkeypatch):
     monkeypatch.setenv("GCP_WORKER_SECRET", "court")
     assert client.get("/v1/info", headers={"X-Worker-Secret": "court"}).status_code == 503
+
+
+def test_docs_and_openapi_are_disabled():
+    for path in ("/docs", "/redoc", "/openapi.json"):
+        assert client.get(path).status_code == 404

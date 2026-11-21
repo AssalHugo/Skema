@@ -11,8 +11,8 @@ set -euo pipefail
 : "${BILLING_ACCOUNT:?BILLING_ACCOUNT requis (gcloud billing accounts list)}"
 : "${PROJECT_ID:?PROJECT_ID requis (ex. skema-prod)}"
 DEV_PROJECT_ID="${DEV_PROJECT_ID:-${PROJECT_ID%-prod}-dev}"
-REGION="${REGION:-europe-west1}"
 BUDGET_EUR="${BUDGET_EUR:-10}"
+BUDGET_CURRENCY="${BUDGET_CURRENCY:-EUR}"
 SA_NAME="gcp-worker"
 
 APIS=(
@@ -41,17 +41,22 @@ ensure_project() {
 ensure_budget() {
   local id="$1" amount="$2"
   local name="skema-${id}"
-  if gcloud billing budgets list --billing-account="$BILLING_ACCOUNT" \
+  local num
+  num="$(gcloud projects describe "$id" --format='value(projectNumber)')"
+  if gcloud billing budgets list \
+      --billing-account="$BILLING_ACCOUNT" \
+      --billing-project="$id" \
       --format="value(displayName)" | grep -qx "$name"; then
     echo "→ budget $name déjà présent"
     return
   fi
-  echo "→ budget $name : ${amount} EUR, alertes 50/90/100 % (n'arrête PAS les dépenses)"
+  echo "→ budget $name : ${amount} ${BUDGET_CURRENCY}, alertes 50/90/100 % (n'arrête PAS les dépenses)"
   gcloud billing budgets create \
     --billing-account="$BILLING_ACCOUNT" \
+    --billing-project="$id" \
     --display-name="$name" \
-    --budget-amount="${amount}EUR" \
-    --filter-projects="projects/$id" \
+    --budget-amount="${amount}${BUDGET_CURRENCY}" \
+    --filter-projects="projects/$num" \
     --threshold-rule=percent=0.5 \
     --threshold-rule=percent=0.9 \
     --threshold-rule=percent=1.0 \
@@ -96,7 +101,7 @@ ensure_budget "$DEV_PROJECT_ID" "${DEV_BUDGET_EUR:-5}"
 
 cat <<MSG
 
-✔ Projets prêts : $PROJECT_ID (prod) et $DEV_PROJECT_ID (dev), région $REGION.
+✔ Projets prêts : $PROJECT_ID (prod) et $DEV_PROJECT_ID (dev).
 
 À faire à la main :
   1. Clé Gemini liée à $PROJECT_ID (paid tier) : https://aistudio.google.com/apikey

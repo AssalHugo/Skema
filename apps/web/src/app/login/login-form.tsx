@@ -13,20 +13,40 @@ export function LoginForm({ googleEnabled }: { googleEnabled: boolean }) {
     e.preventDefault();
     setError(null);
     setPending(true);
-    const form = new FormData(e.currentTarget);
-    const email = String(form.get("email"));
-    const password = String(form.get("password"));
-    const { error } =
-      mode === "signin"
-        ? await signIn.email({ email, password })
-        : await signUp.email({ email, password, name: String(form.get("name") || email) });
-    setPending(false);
-    if (error) {
-      setError(error.message ?? "Échec de la connexion");
-      return;
+    try {
+      const form = new FormData(e.currentTarget);
+      const email = String(form.get("email"));
+      const password = String(form.get("password"));
+      const { error } =
+        mode === "signin"
+          ? await signIn.email({ email, password })
+          : await signUp.email({ email, password, name: String(form.get("name") || email) });
+      if (error) {
+        setError(error.message ?? "Échec de la connexion");
+        return;
+      }
+      router.push("/");
+      router.refresh();
+    } catch {
+      setError("Erreur réseau, réessaie dans un instant.");
+    } finally {
+      setPending(false);
     }
-    router.push("/");
-    router.refresh();
+  }
+
+  async function onGoogleSignIn() {
+    setError(null);
+    setPending(true);
+    try {
+      const { error } = await signIn.social({ provider: "google", callbackURL: "/" });
+      if (error) {
+        setError(error.message ?? "Échec de la connexion Google");
+        setPending(false);
+      }
+    } catch {
+      setError("Erreur réseau, réessaie dans un instant.");
+      setPending(false);
+    }
   }
 
   const input = "rounded-lg border border-white/20 bg-transparent px-4 py-3";
@@ -35,12 +55,19 @@ export function LoginForm({ googleEnabled }: { googleEnabled: boolean }) {
     <div className="flex flex-col gap-4">
       <form onSubmit={onSubmit} className="flex flex-col gap-3">
         {mode === "signup" && (
-          <input name="name" placeholder="Prénom" autoComplete="given-name" className={input} />
+          <input
+            name="name"
+            aria-label="Prénom"
+            placeholder="Prénom"
+            autoComplete="given-name"
+            className={input}
+          />
         )}
         <input
           name="email"
           type="email"
           required
+          aria-label="E-mail"
           placeholder="E-mail"
           autoComplete="email"
           className={input}
@@ -50,11 +77,16 @@ export function LoginForm({ googleEnabled }: { googleEnabled: boolean }) {
           type="password"
           required
           minLength={10}
+          aria-label="Mot de passe"
           placeholder="Mot de passe (10 caractères min.)"
           autoComplete={mode === "signin" ? "current-password" : "new-password"}
           className={input}
         />
-        {error && <p className="text-sm text-red-400">{error}</p>}
+        {error && (
+          <p role="alert" className="text-sm text-red-400">
+            {error}
+          </p>
+        )}
         <button
           type="submit"
           disabled={pending}
@@ -67,8 +99,9 @@ export function LoginForm({ googleEnabled }: { googleEnabled: boolean }) {
       {googleEnabled && (
         <button
           type="button"
-          onClick={() => signIn.social({ provider: "google", callbackURL: "/" })}
-          className="rounded-lg border border-white/20 px-4 py-3 font-semibold"
+          disabled={pending}
+          onClick={onGoogleSignIn}
+          className="rounded-lg border border-white/20 px-4 py-3 font-semibold disabled:opacity-50"
         >
           Continuer avec Google
         </button>
@@ -76,7 +109,10 @@ export function LoginForm({ googleEnabled }: { googleEnabled: boolean }) {
 
       <button
         type="button"
-        onClick={() => setMode(mode === "signin" ? "signup" : "signin")}
+        onClick={() => {
+          setError(null);
+          setMode(mode === "signin" ? "signup" : "signin");
+        }}
         className="text-sm text-muted underline"
       >
         {mode === "signin" ? "Pas encore de compte ? S'inscrire" : "Déjà inscrit ? Se connecter"}

@@ -21,6 +21,9 @@ function lazy<T extends z.ZodType>(schema: T) {
   };
 }
 
+const emptyToUndefined = <T extends z.ZodType>(schema: T) =>
+  z.preprocess((v) => (v === "" ? undefined : v), schema);
+
 export const dbEnv = lazy(z.object({ DATABASE_URL: z.url() }));
 
 export const r2Env = lazy(
@@ -31,24 +34,24 @@ export const r2Env = lazy(
     R2_BUCKET: z.string().min(1),
     R2_PUBLIC_BASE_URL: z.url(),
     // Facultatif : par défaut https://<R2_ACCOUNT_ID>.r2.cloudflarestorage.com
-    R2_ENDPOINT: z.url().optional(),
+    R2_ENDPOINT: emptyToUndefined(z.url().optional()),
   }),
 );
 
 export const geminiEnv = lazy(
   z.object({
     GEMINI_API_KEY: z.string().min(1),
-    GEMINI_MODEL_QUALITY: z.string().default("gemini-4-hydrogen"),
-    GEMINI_MODEL_BULK: z.string().default("gemini-3.8-flash"),
-    GEMINI_MODEL_LITE: z.string().default("gemini-3.5-flash-lite"),
+    GEMINI_MODEL_QUALITY: emptyToUndefined(z.string().min(1).default("gemini-4-hydrogen")),
+    GEMINI_MODEL_BULK: emptyToUndefined(z.string().min(1).default("gemini-3.8-flash")),
+    GEMINI_MODEL_LITE: emptyToUndefined(z.string().min(1).default("gemini-3.5-flash-lite")),
   }),
 );
 
 export const authEnv = lazy(
   z.object({
     BETTER_AUTH_SECRET: z.string().min(32),
-    BETTER_AUTH_URL: z.url().optional(),
-    GOOGLE_OAUTH_CLIENT_ID: z.string().optional(),
-    GOOGLE_OAUTH_CLIENT_SECRET: z.string().optional(),
+    BETTER_AUTH_URL: emptyToUndefined(z.url().optional()),
+    GOOGLE_OAUTH_CLIENT_ID: emptyToUndefined(z.string().min(1).optional()),
+    GOOGLE_OAUTH_CLIENT_SECRET: emptyToUndefined(z.string().min(1).optional()),
   }),
 );

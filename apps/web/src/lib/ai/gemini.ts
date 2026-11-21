@@ -124,9 +124,9 @@ export class StructuredOutputError extends Error {
   constructor(
     message: string,
     readonly raw: string | undefined,
-    readonly cause?: unknown,
+    cause?: unknown,
   ) {
-    super(message);
+    super(message, { cause });
     this.name = "StructuredOutputError";
   }
 }
@@ -147,10 +147,15 @@ export async function generateStructured<S extends z.ZodType>(
   const ai = getGemini(opts.apiVersion);
 
   let totalCost = 0;
-  let lastTokens: TokenCounts | undefined;
+  const totalTokens: TokenCounts = {
+    inputTokens: 0,
+    outputTokens: 0,
+    thinkingTokens: 0,
+    toolUsePromptTokens: 0,
+  };
   let lastError: unknown;
   let lastRaw: string | undefined;
-  const attempts = 1 + (opts.retries ?? 1);
+  const attempts = 1 + Math.max(0, opts.retries ?? 1);
 
   for (let attempt = 1; attempt <= attempts; attempt++) {
     const response = await ai.models.generateContent({
@@ -166,23 +171,28 @@ export async function generateStructured<S extends z.ZodType>(
     });
 
     const { costUsd, tokens } = await logGeminiUsage(model, response.usageMetadata, {
-      ...opts,
+      task: opts.task,
+      courseId: opts.courseId,
+      episodeId: opts.episodeId,
       metadata: { ...opts.metadata, attempt, thinkingLevel },
     });
     totalCost += costUsd;
-    lastTokens = tokens;
+    totalTokens.inputTokens += tokens.inputTokens;
+    totalTokens.outputTokens += tokens.outputTokens;
+    totalTokens.thinkingTokens += tokens.thinkingTokens;
+    totalTokens.toolUsePromptTokens += tokens.toolUsePromptTokens;
     lastRaw = response.text;
 
     try {
       const parsed = zodSchema.parse(JSON.parse(lastRaw ?? ""));
-      return { data: parsed, model, costUsd: totalCost, tokens };
+      return { data: parsed, model, costUsd: totalCost, tokens: totalTokens };
     } catch (err) {
       lastError = err;
     }
   }
 
   throw new StructuredOutputError(
-    `Sortie Gemini non conforme au schéma après ${attempts} essai(s) (${opts.task}, ${model}, coût ${totalCost.toFixed(4)} $, tokens ${JSON.stringify(lastTokens)})`,
+    `Sortie Gemini non conforme au schéma après ${attempts} essai(s) (${opts.task}, ${model}, coût ${totalCost.toFixed(4)} $, tokens ${JSON.stringify(totalTokens)})`,
     lastRaw,
     lastError,
   );
