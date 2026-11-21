@@ -1,0 +1,9 @@
+node_modules/
+.pnpm-store/
+.env
+.env.*
+!.env.example
+*.key.json
+gcp-*.json
+__pycache__/
+.venv/
