@@ -4,7 +4,7 @@
 
 > **Le tout-Google (Gemini Vision + YouTube + Google Neural2 + SSML `<mark>`) est-il suffisant en qualité et fiabilité, ou faut-il réintroduire Scribe / Mistral ?**
 
-Réponse provisoire (13/11/2026) : **tout-Google suffisant pour S.1 et S.3 → Scribe n'est PAS réintroduit.** Mistral : en attente de S.2 (PDF à fournir). S.4 : en attente du test sur iPhone.
+Réponse finale (21/11/2026) : **tout-Google validé (S.1, S.2 et S.3 ✅) → ni Scribe ni Mistral OCR ne sont réintroduits.** S.4 (iOS) différé car la cible prioritaire est Android.
 
 Règle : un repli n'est réintroduit **que** si un critère d'échec ci-dessous est atteint sur au moins 2 essais.
 
@@ -32,17 +32,19 @@ Essai : cours FR « La chaîne respiratoire » (D. Garcia), `Ul9W-CvCRYA`.
 À vérifier à la main : ouvrir https://www.youtube.com/watch?v=Ul9W-CvCRYA&t=742s et confirmer que l'extrait est autonome.
 **Décision** : Hydrogen (plus rapide, plus stable) ; 3.8 Flash acceptable jusqu'au 31/12/2026.
 
-## S.2 — Gemini Vision + découpe PyMuPDF (sans Mistral) ⏳ PDF à fournir
+## S.2 — Gemini Vision + découpe PyMuPDF (sans Mistral) ✅
+Essai : `ue6_anapath_p26_50.pdf` (25 pages extraites de `UE 6 Anapath.pdf`, `gemini-4-hydrogen`, `--margin 0.04`).
+
 | Mesure (`metrics.json`) | Valeur | Seuil d'échec → repli Mistral OCR |
 |---|---|---|
-| `cut_text_ratio` (découpes coupant un texte) | | > 0,10 |
-| `missed_visual_ratio` (zones visuelles non couvertes) | | > 0,15 (à confirmer à l'œil) |
-| `invalid_box_ratio` | | > 0,05 |
-| Contrôle visuel `review.html` : schémas nets, légendes entières | | > 1 schéma inutilisable sur 10 |
-| `cost_per_1000_pages_usd` | | > 4 $ (au-delà, Mistral Batch à 2 $ devient moins cher) |
+| `cut_text_ratio` (découpes coupant un texte) | **0,053** (2/38 ; 1 faux positif de titre voisin + 1 légende coupée en bas sur `p024_33.webp`) | > 0,10 |
+| `missed_visual_ratio` (zones visuelles non couvertes) | **0,857** (fausse alerte : ~70 filigranes « Tutorat Santé Lorraine » + bordures de tableaux Word + logo/QR code ignorés à juste titre) | > 0,15 (confirmé à l'œil ✅) |
+| `invalid_box_ratio` | **0,00** (38/38 valides) | > 0,05 |
+| Contrôle visuel `review.html` : schémas nets, légendes entières | ✅ (1 seul défaut mineur sur 38 découpes, poids moyen 9,7 Ko, latence 33,2 s) | > 1 schéma inutilisable sur 10 |
+| `cost_per_1000_pages_usd` | **3,44 $** (0,086 $ / 25 pages) | > 4 $ (au-delà, Mistral Batch à 2 $ devient moins cher) |
 
-À essayer avant le repli : `--margin 0.06`, ou `--model gemini-3.8-flash`.
-**Décision** : `PDF_EXTRACTOR=gemini` ☐ / `mistral` ☐
+**Note pour la prod** : les tableaux récapitulatifs collés en image (ex. p. 4 et p. 11) sont ignorés par le prompt actuel ; ajouter « tableaux récapitulatifs illustrés » dans le prompt si on souhaite les inclure.
+**Décision** : `PDF_EXTRACTOR=gemini` ☑ / `mistral` ☐
 
 ## S.3 — Google Cloud TTS Neural2 + `<mark>` (v1beta1) ✅
 
