@@ -3,7 +3,7 @@ import "server-only";
 import { and, asc, count, desc, eq } from "drizzle-orm";
 import { getDb, schema } from "@/lib/db";
 
-const { courses, chapters, concepts, courseDiagrams } = schema;
+const { courses, chapters, concepts, courseDiagrams, episodes } = schema;
 
 export type ChapterMetrics = {
   figures?: number;
@@ -46,7 +46,7 @@ export async function getCourseOverview(userId: string, courseId: string) {
   });
   if (!course) return null;
 
-  const [rows, conceptCounts, diagramCounts] = await Promise.all([
+  const [rows, conceptCounts, diagramCounts, capsules] = await Promise.all([
     db
       .select({
         id: chapters.id,
@@ -72,6 +72,19 @@ export async function getCourseOverview(userId: string, courseId: string) {
       .from(courseDiagrams)
       .where(eq(courseDiagrams.courseId, courseId))
       .groupBy(courseDiagrams.chapterId),
+    db
+      .select({
+        id: episodes.id,
+        chapterId: concepts.chapterId,
+        title: episodes.title,
+        status: episodes.status,
+        durationSec: episodes.durationSec,
+        error: episodes.error,
+      })
+      .from(episodes)
+      .innerJoin(concepts, eq(episodes.conceptId, concepts.id))
+      .where(and(eq(episodes.courseId, courseId), eq(episodes.engineType, "generated")))
+      .orderBy(asc(concepts.orderIndex)),
   ]);
   const byChapter = (list: { chapterId: string | null; n: number }[]) =>
     new Map(list.map((r) => [r.chapterId, Number(r.n)]));
@@ -87,6 +100,9 @@ export async function getCourseOverview(userId: string, courseId: string) {
       concepts: nConcepts.get(c.id) ?? 0,
       diagrams: nDiagrams.get(c.id) ?? 0,
       metrics: (metrics ?? null) as ChapterMetrics | null,
+      episodes: capsules
+        .filter((e) => e.chapterId === c.id)
+        .map((e) => ({ id: e.id, title: e.title, status: e.status, durationSec: e.durationSec, error: e.error })),
     })),
   };
 }

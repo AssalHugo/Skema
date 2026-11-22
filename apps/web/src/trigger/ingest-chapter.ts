@@ -8,7 +8,7 @@
  *   4. fan-out des moteurs 2 et 1 pour les concepts de ce chapitre uniquement.
  */
 import { AbortTaskRunError, logger, schemaTask, type TaskOutput } from "@trigger.dev/sdk";
-import { and, asc, between, eq, type SQL } from "drizzle-orm";
+import { and, asc, between, eq, isNotNull, type SQL } from "drizzle-orm";
 import { z } from "zod";
 import { deleteGeminiFile, uploadGeminiFile, type GeminiFileRef } from "@/lib/ai/gemini";
 import { getDb, schema, type Database } from "@/lib/db";
@@ -29,7 +29,7 @@ import { curateYoutube } from "./curate-youtube";
 import { abortIfPermanent, errorMessage } from "./errors";
 import { generateEpisode } from "./generate-episode";
 
-const { courses, chapters, courseDiagrams, concepts } = schema;
+const { courses, chapters, courseDiagrams, concepts, episodes } = schema;
 
 /** Gemini et /crop-bboxes : au plus 4 lots traités en même temps, tous chapitres confondus. */
 const VISION_CONCURRENCY = 4;
@@ -186,7 +186,14 @@ export const ingestChapter = schemaTask({
     const pdfKey = course.pdfR2Key ?? course.sourceR2Key;
     await db.update(chapters).set({ status: "processing", error: null }).where(eq(chapters.id, chapterId));
 
-    // 0. Relance : on repart de zéro pour ce chapitre (les épisodes suivent par cascade).
+    // 0. Relance : on repart de zéro pour ce chapitre (les épisodes suivent par cascade,
+    //    leurs MP3 sont supprimés de R2 au préalable).
+    const audio = await db
+      .select({ key: episodes.audioR2Key })
+      .from(episodes)
+      .innerJoin(concepts, eq(episodes.conceptId, concepts.id))
+      .where(and(eq(concepts.chapterId, chapterId), isNotNull(episodes.audioR2Key)));
+    if (audio.length) await deleteObjects(audio.flatMap((a) => (a.key ? [a.key] : [])));
     await db.delete(concepts).where(eq(concepts.chapterId, chapterId));
     const removed = await deleteDiagrams(db, eq(courseDiagrams.chapterId, chapterId));
     if (removed) logger.info("Anciens schémas supprimés", { removed });

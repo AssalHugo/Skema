@@ -8,6 +8,9 @@ export const courseKeys = {
     `courses/${courseId}/chapters/${chapterId}/batch-p${pageStart}-${pageEnd}.pdf`,
   /** Schéma découpé (identifiant unique : immuable, cache long). */
   diagram: (courseId: string, diagramId: string) => `courses/${courseId}/diagrams/${diagramId}.webp`,
+  /** Voix-off d'une capsule générée (une clé par génération : immuable, cache long). */
+  episodeAudio: (courseId: string, episodeId: string, version: string) =>
+    `courses/${courseId}/episodes/${episodeId}/${version}.mp3`,
 };
 
 export const SLIDE_EXTENSIONS = ["pptx", "ppt", "odp"] as const;

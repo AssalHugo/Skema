@@ -166,3 +166,83 @@ export function convertToPdf(
 ): Promise<z.infer<typeof ConvertResult>> {
   return callWorker("/pptx-to-pdf", { source_url: sourceUrl, put_url: putUrl, extension }, ConvertResult);
 }
+
+// ---------------------------------------------------------------------------
+// POST /page-text
+// ---------------------------------------------------------------------------
+
+const PageTextResult = z.object({
+  page_count: z.number().int(),
+  pages: z.array(z.object({ page: z.number().int(), text: z.string() })),
+});
+
+/** Texte natif de quelques pages (1 = première page du PDF pointé). */
+export function pageText(
+  sourceUrl: string,
+  pages: number[],
+  maxCharsPerPage = 4000,
+): Promise<z.infer<typeof PageTextResult>> {
+  return callWorker(
+    "/page-text",
+    { source_url: sourceUrl, pages, max_chars_per_page: maxCharsPerPage },
+    PageTextResult,
+    120_000,
+  );
+}
+
+// ---------------------------------------------------------------------------
+// POST /tts
+// ---------------------------------------------------------------------------
+
+const TtsResult = z.object({
+  voice: z.string(),
+  mime_type: z.string(),
+  duration_ms: z.number().int().nonnegative(),
+  bytes: z.number().int().positive(),
+  audio_base64: z.string().min(1),
+  word_timings: z.array(
+    z.object({
+      word: z.string(),
+      start_ms: z.number().int(),
+      end_ms: z.number().int(),
+      exact: z.boolean(),
+    }),
+  ),
+  requests: z.number().int(),
+  ssml_bytes_per_request: z.array(z.number().int()),
+  billable_chars: z.number().int(),
+  billable_chars_without_marks: z.number().int(),
+  latency_ms: z.number().int(),
+  verdict: z
+    .object({
+      ok: z.boolean(),
+      fails: z.array(z.string()),
+      mark_coverage_pct: z.number(),
+      monotonic: z.boolean(),
+      words_under_50ms: z.number().int(),
+    })
+    .loose()
+    .nullable(),
+});
+export type TtsResult = z.infer<typeof TtsResult>;
+
+export function synthesizeSpeech(params: {
+  units: { word: string; ssml: string }[];
+  voice: string;
+  markEvery: number;
+  speakingRate?: number;
+  mp3Kbps?: number;
+}): Promise<TtsResult> {
+  return callWorker(
+    "/tts",
+    {
+      units: params.units,
+      voice: params.voice,
+      mark_every: params.markEvery,
+      speaking_rate: params.speakingRate ?? 1,
+      mp3_kbps: params.mp3Kbps ?? 64,
+    },
+    TtsResult,
+    300_000,
+  );
+}
