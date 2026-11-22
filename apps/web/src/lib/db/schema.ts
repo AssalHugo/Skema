@@ -131,12 +131,28 @@ export const courses = pgTable(
     title: text("title").notNull(),
     discipline: text("discipline").default("biologie"),
     sourceR2Key: text("source_r2_key").notNull(),
+    /** PDF effectivement ingéré : la source, ou sa conversion si c'est un diaporama. */
+    pdfR2Key: text("pdf_r2_key"),
     pageCount: integer("page_count").notNull().default(0),
+    /** Origine du découpage en chapitres : outline | headings | fixed | single. */
+    structureSource: text("structure_source"),
     status: courseStatus("status").notNull().default("processing"),
+    error: text("error"),
     createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
   },
   (t) => [index("courses_user_id_idx").on(t.userId)],
 );
+
+export interface ChapterBatch {
+  /** Pages du document complet, 1-indexées, bornes incluses. */
+  pageStart: number;
+  pageEnd: number;
+  bytes: number | null;
+  /** Le lot couvre tout le document : le PDF source sert directement. */
+  wholeDocument: boolean;
+  /** Clé R2 du PDF du lot (renseignée à la génération du chapitre). */
+  r2Key?: string;
+}
 
 /** 1 bis. Chapitres d'un cours (découpe des polycopiés de 100–350+ pages, génération à la demande). */
 export const chapters = pgTable(
@@ -151,6 +167,11 @@ export const chapters = pgTable(
     pageStart: integer("page_start").notNull(),
     pageEnd: integer("page_end").notNull(),
     status: chapterStatus("status").notNull().default("pending"),
+    /** Lots de 25–30 pages (< 40 Mo) envoyés à Gemini Vision, calculés à l'upload. */
+    batches: jsonb("batches").$type<ChapterBatch[]>().notNull().default([]),
+    /** Métriques d'extraction (cut_text_ratio, invalid_box_ratio…, cf. S.2). */
+    metrics: jsonb("metrics").$type<Record<string, unknown>>(),
+    error: text("error"),
     createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
   },
   (t) => [index("chapters_course_id_idx").on(t.courseId)],
@@ -190,6 +211,8 @@ export const concepts = pgTable(
     chapterId: uuid("chapter_id").references(() => chapters.id, { onDelete: "cascade" }),
     chapterTitle: text("chapter_title").notNull(),
     title: text("title").notNull(),
+    /** Objectif et points clés (2 à 4 phrases) : base du script du moteur 2. */
+    summary: text("summary"),
     keywords: text("keywords").array().notNull(),
     sourcePages: integer("source_pages").array().notNull(),
     diagramIds: uuid("diagram_ids")

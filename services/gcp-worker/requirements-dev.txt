@@ -1,3 +1,5 @@
 -r requirements.txt
 pytest==8.4.2
 httpx==0.28.1
+# Génère un diaporama de test pour /pptx-to-pdf
+python-pptx==1.0.2

@@ -1,9 +1,14 @@
 FROM python:3.13-slim
 
-# ffmpeg : encodage MP3 des capsules (phase 2). LibreOffice (pptx → pdf) sera
-# ajouté en phase 1.
+# - ffmpeg : encodage MP3 des capsules (phase 2) ;
+# - LibreOffice Impress (sans Java) : POST /pptx-to-pdf ;
+# - polices métriquement compatibles Office (Carlito ≈ Calibri, Caladea ≈
+#   Cambria, Liberation ≈ Arial/Times) pour ne pas décaler les schémas.
 RUN apt-get update \
-    && apt-get install -y --no-install-recommends ffmpeg \
+    && apt-get install -y --no-install-recommends \
+        ffmpeg \
+        libreoffice-impress \
+        fonts-dejavu-core fonts-liberation fonts-crosextra-carlito fonts-crosextra-caladea \
     && rm -rf /var/lib/apt/lists/*
 
 ENV PYTHONDONTWRITEBYTECODE=1 PYTHONUNBUFFERED=1 PORT=8080

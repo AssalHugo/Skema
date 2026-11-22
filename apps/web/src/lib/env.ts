@@ -55,3 +55,18 @@ export const authEnv = lazy(
     GOOGLE_OAUTH_CLIENT_SECRET: emptyToUndefined(z.string().min(1).optional()),
   }),
 );
+
+export const workerEnv = lazy(
+  z.object({
+    GCP_WORKER_URL: z.url(),
+    GCP_WORKER_SECRET: z.string().min(32),
+  }),
+);
+
+export const ingestEnv = lazy(
+  z.object({
+    // gemini (défaut, validé en S.2) | mistral (repli si les seuils de S.2 échouent)
+    PDF_EXTRACTOR: emptyToUndefined(z.enum(["gemini", "mistral"]).default("gemini")),
+    MISTRAL_API_KEY: emptyToUndefined(z.string().min(1).optional()),
+  }),
+);
