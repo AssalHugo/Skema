@@ -8,9 +8,12 @@
  */
 import "server-only";
 import {
+  FileState,
   GoogleGenAI,
   ThinkingLevel,
+  createPartFromUri,
   type ContentListUnion,
+  type Part,
   type GenerateContentResponseUsageMetadata,
 } from "@google/genai";
 import { z } from "zod";
@@ -175,6 +178,7 @@ export async function generateStructured<S extends z.ZodType>(
     const { costUsd, tokens } = await logGeminiUsage(model, response.usageMetadata, {
       task: opts.task,
       courseId: opts.courseId,
+      chapterId: opts.chapterId,
       episodeId: opts.episodeId,
       metadata: { ...opts.metadata, attempt, thinkingLevel },
     });
@@ -198,4 +202,51 @@ export async function generateStructured<S extends z.ZodType>(
     lastRaw,
     lastError,
   );
+}
+
+// ---------------------------------------------------------------------------
+// Files API (lots PDF de l'ingestion ; conservés 48 h par Google)
+// ---------------------------------------------------------------------------
+
+export interface GeminiFileRef {
+  name: string;
+  uri: string;
+  mimeType: string;
+}
+
+/** Envoie un fichier à la Files API et attend qu'il soit utilisable. */
+export async function uploadGeminiFile(
+  bytes: Uint8Array,
+  mimeType: string,
+  displayName: string,
+  timeoutMs = 120_000,
+): Promise<GeminiFileRef> {
+  const ai = getGemini();
+  let file = await ai.files.upload({
+    file: new Blob([bytes as BlobPart], { type: mimeType }),
+    config: { mimeType, displayName },
+  });
+  const deadline = Date.now() + timeoutMs;
+  while (file.state === FileState.PROCESSING) {
+    if (Date.now() > deadline) throw new Error(`Fichier Gemini toujours en traitement : ${displayName}`);
+    await new Promise((r) => setTimeout(r, 2_000));
+    file = await ai.files.get({ name: file.name! });
+  }
+  if (file.state === FileState.FAILED || !file.uri || !file.name) {
+    throw new Error(`Échec du traitement Gemini du fichier ${displayName} : ${file.error?.message ?? file.state}`);
+  }
+  return { name: file.name, uri: file.uri, mimeType: file.mimeType ?? mimeType };
+}
+
+/** Suppression best effort (les fichiers expirent de toute façon après 48 h). */
+export async function deleteGeminiFile(name: string): Promise<void> {
+  try {
+    await getGemini().files.delete({ name });
+  } catch (err) {
+    console.warn(`[gemini] suppression de ${name} impossible`, err);
+  }
+}
+
+export function filePart(file: GeminiFileRef): Part {
+  return createPartFromUri(file.uri, file.mimeType);
 }

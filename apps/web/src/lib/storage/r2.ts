@@ -6,7 +6,15 @@
  *   `R2_PUBLIC_BASE_URL` (egress gratuit).
  */
 import "server-only";
-import { PutObjectCommand, S3Client } from "@aws-sdk/client-s3";
+import {
+  DeleteObjectCommand,
+  GetObjectCommand,
+  HeadObjectCommand,
+  NotFound,
+  PutObjectCommand,
+  S3Client,
+  type HeadObjectCommandOutput,
+} from "@aws-sdk/client-s3";
 import { getSignedUrl } from "@aws-sdk/s3-request-presigner";
 import { r2Env } from "@/lib/env";
 
@@ -67,6 +75,63 @@ export async function getPresignedUploadUrl(params: {
   };
 }
 
+/**
+ * URL PUT pré-signée pour un écrivain de confiance (gcp-worker) dont la taille
+ * de sortie n'est pas connue d'avance (lots PDF, conversion PPTX → PDF).
+ */
+export async function getPresignedPutUrl(params: {
+  key: string;
+  contentType: string;
+  expiresInSec?: number;
+}): Promise<string> {
+  const command = new PutObjectCommand({
+    Bucket: r2Env().R2_BUCKET,
+    Key: params.key,
+    ContentType: params.contentType,
+  });
+  return getSignedUrl(getClient(), command, {
+    expiresIn: params.expiresInSec ?? 3600,
+    signableHeaders: new Set(["content-type"]),
+  });
+}
+
+/** URL GET pré-signée (lecture d'un objet privé par gcp-worker ou Mistral OCR). */
+export async function getPresignedDownloadUrl(key: string, expiresInSec = 3600): Promise<string> {
+  const command = new GetObjectCommand({ Bucket: r2Env().R2_BUCKET, Key: key });
+  return getSignedUrl(getClient(), command, { expiresIn: expiresInSec });
+}
+
+/** Métadonnées d'un objet, ou `null` s'il n'existe pas. */
+export async function headObject(key: string): Promise<HeadObjectCommandOutput | null> {
+  try {
+    return await getClient().send(new HeadObjectCommand({ Bucket: r2Env().R2_BUCKET, Key: key }));
+  } catch (err) {
+    if (err instanceof NotFound || (err as { name?: string }).name === "NotFound") return null;
+    throw err;
+  }
+}
+
+/** Contenu complet d'un objet (lots PDF ≤ 40 Mo envoyés à Gemini). */
+export async function getObjectBytes(key: string): Promise<Uint8Array> {
+  const res = await getClient().send(new GetObjectCommand({ Bucket: r2Env().R2_BUCKET, Key: key }));
+  if (!res.Body) throw new Error(`Objet R2 vide : ${key}`);
+  return res.Body.transformToByteArray();
+}
+
+/**
+ * Suppression d'objets (clé par clé : la suppression groupée S3 exige des
+ * sommes de contrôle que R2 et le SDK ne négocient pas toujours bien).
+ */
+export async function deleteObjects(keys: string[], concurrency = 8): Promise<void> {
+  for (let i = 0; i < keys.length; i += concurrency) {
+    await Promise.all(
+      keys
+        .slice(i, i + concurrency)
+        .map((Key) => getClient().send(new DeleteObjectCommand({ Bucket: r2Env().R2_BUCKET, Key }))),
+    );
+  }
+}
+
 /** Upload côté serveur (WebP des schémas, MP3 des capsules…). */
 export async function uploadBufferToR2(params: {
   key: string;
@@ -106,10 +171,13 @@ function sanitizeSegment(segment: string, fallback: string): string {
   );
 }
 
+/** Préfixe normalisé des objets d'un utilisateur : `<préfixe>/<userId>/`. */
+export function userObjectPrefix(prefix: string, userId: string): string {
+  return `${sanitizeSegment(prefix, "assets")}/${sanitizeSegment(userId, "anon")}/`;
+}
+
 /** Clé R2 normalisée : `<préfixe>/<userId>/<uuid>-<nom-assaini>`. */
 export function buildObjectKey(prefix: string, userId: string, filename: string): string {
-  const safePrefix = sanitizeSegment(prefix, "assets");
-  const safeUser = sanitizeSegment(userId, "anon");
   const safeFile = sanitizeSegment(filename, "fichier");
-  return `${safePrefix}/${safeUser}/${crypto.randomUUID()}-${safeFile}`;
+  return `${userObjectPrefix(prefix, userId)}${crypto.randomUUID()}-${safeFile}`;
 }
