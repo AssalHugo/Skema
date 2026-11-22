@@ -105,6 +105,12 @@ export const verification = pgTable(
 // ---------------------------------------------------------------------------
 
 export const courseStatus = pgEnum("course_status", ["processing", "ready", "failed"]);
+export const chapterStatus = pgEnum("chapter_status", [
+  "pending",
+  "processing",
+  "ready",
+  "failed",
+]);
 export const engineType = pgEnum("engine_type", ["generated", "youtube_short", "youtube_clip"]);
 export const episodeStatus = pgEnum("episode_status", [
   "pending",
@@ -132,6 +138,24 @@ export const courses = pgTable(
   (t) => [index("courses_user_id_idx").on(t.userId)],
 );
 
+/** 1 bis. Chapitres d'un cours (découpe des polycopiés de 100–350+ pages, génération à la demande). */
+export const chapters = pgTable(
+  "chapters",
+  {
+    id: uuid("id").primaryKey().defaultRandom(),
+    courseId: uuid("course_id")
+      .notNull()
+      .references(() => courses.id, { onDelete: "cascade" }),
+    title: text("title").notNull(),
+    orderIndex: integer("order_index").notNull(),
+    pageStart: integer("page_start").notNull(),
+    pageEnd: integer("page_end").notNull(),
+    status: chapterStatus("status").notNull().default("pending"),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => [index("chapters_course_id_idx").on(t.courseId)],
+);
+
 /** 2. Schémas et figures extraits du cours (bbox normalisée 0..1000). */
 export const courseDiagrams = pgTable(
   "course_diagrams",
@@ -140,6 +164,7 @@ export const courseDiagrams = pgTable(
     courseId: uuid("course_id")
       .notNull()
       .references(() => courses.id, { onDelete: "cascade" }),
+    chapterId: uuid("chapter_id").references(() => chapters.id, { onDelete: "cascade" }),
     pageNumber: integer("page_number").notNull(),
     r2ImageKey: text("r2_image_key").notNull(),
     width: integer("width").notNull(),
@@ -148,7 +173,10 @@ export const courseDiagrams = pgTable(
     aiDescription: text("ai_description").notNull(),
     bboxJson: jsonb("bbox_json").$type<{ ymin: number; xmin: number; ymax: number; xmax: number }>(),
   },
-  (t) => [index("course_diagrams_course_id_idx").on(t.courseId)],
+  (t) => [
+    index("course_diagrams_course_id_idx").on(t.courseId),
+    index("course_diagrams_chapter_id_idx").on(t.chapterId),
+  ],
 );
 
 /** 3. Concepts atomiques extraits, reliés à leurs schémas (`diagram_ids`). */
@@ -159,6 +187,7 @@ export const concepts = pgTable(
     courseId: uuid("course_id")
       .notNull()
       .references(() => courses.id, { onDelete: "cascade" }),
+    chapterId: uuid("chapter_id").references(() => chapters.id, { onDelete: "cascade" }),
     chapterTitle: text("chapter_title").notNull(),
     title: text("title").notNull(),
     keywords: text("keywords").array().notNull(),
@@ -169,7 +198,10 @@ export const concepts = pgTable(
       .default(sql`'{}'::uuid[]`),
     orderIndex: integer("order_index").notNull(),
   },
-  (t) => [index("concepts_course_id_idx").on(t.courseId)],
+  (t) => [
+    index("concepts_course_id_idx").on(t.courseId),
+    index("concepts_chapter_id_idx").on(t.chapterId),
+  ],
 );
 
 /** 4. Cache des métadonnées YouTube (TTL 30 jours, purgeable). */
@@ -259,6 +291,7 @@ export const aiUsage = pgTable(
     characters: integer("characters").notNull().default(0), // TTS
     costUsd: numeric("cost_usd", { precision: 10, scale: 6, mode: "number" }).notNull().default(0),
     courseId: uuid("course_id").references(() => courses.id, { onDelete: "set null" }),
+    chapterId: uuid("chapter_id").references(() => chapters.id, { onDelete: "set null" }),
     episodeId: uuid("episode_id").references(() => episodes.id, { onDelete: "set null" }),
     metadata: jsonb("metadata"),
   },

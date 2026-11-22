@@ -2,6 +2,7 @@
 .venv/
 out/
 inputs/
+input/
 __pycache__/
 *.key.json
 gcp-*.json
