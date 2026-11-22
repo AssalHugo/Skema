@@ -79,7 +79,7 @@ def info() -> dict:
 
 @contextmanager
 def workdir() -> Iterator[Path]:
-    with tempfile.TemporaryDirectory(prefix="skema-") as d:
+    with tempfile.TemporaryDirectory(prefix="skema-", ignore_cleanup_errors=True) as d:
         yield Path(d)
 
 

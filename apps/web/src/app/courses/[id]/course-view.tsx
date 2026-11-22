@@ -22,25 +22,46 @@ const STRUCTURE_LABEL: Record<string, string> = {
 export function CourseView({ initial }: { initial: CourseOverview }) {
   const [data, setData] = useState(initial);
   const [error, setError] = useState<string | null>(null);
+  const [submitting, setSubmitting] = useState<Record<string, boolean>>({});
   const { course, chapters } = data;
   const busy = course.status === "processing" || chapters.some((c) => c.status === "processing");
 
   const refresh = useCallback(async () => {
-    const res = await fetch(`/api/courses/${course.id}`, { cache: "no-store" });
-    if (res.ok) setData((await res.json()) as CourseOverview);
+    try {
+      const res = await fetch(`/api/courses/${course.id}`, { cache: "no-store" });
+      if (res.ok) setData((await res.json()) as CourseOverview);
+    } catch {
+      /* erreur réseau transitoire : le prochain poll reprendra */
+    }
   }, [course.id]);
 
   useEffect(() => {
     if (!busy) return;
-    const timer = setInterval(refresh, POLL_MS);
-    return () => clearInterval(timer);
+    let cancelled = false;
+    let timer: ReturnType<typeof setTimeout>;
+    const tick = async () => {
+      await refresh();
+      if (!cancelled) timer = setTimeout(tick, POLL_MS);
+    };
+    timer = setTimeout(tick, POLL_MS);
+    return () => {
+      cancelled = true;
+      clearTimeout(timer);
+    };
   }, [busy, refresh]);
 
   async function generate(chapterId: string, force: boolean) {
     setError(null);
-    const res = await fetch(`/api/chapters/${chapterId}/generate${force ? "?force=1" : ""}`, { method: "POST" });
-    if (!res.ok) setError(((await res.json().catch(() => ({}))) as { error?: string }).error ?? `Erreur ${res.status}`);
-    await refresh();
+    setSubmitting((s) => ({ ...s, [chapterId]: true }));
+    try {
+      const res = await fetch(`/api/chapters/${chapterId}/generate${force ? "?force=1" : ""}`, { method: "POST" });
+      if (!res.ok) setError(((await res.json().catch(() => ({}))) as { error?: string }).error ?? `Erreur ${res.status}`);
+      await refresh();
+    } catch {
+      setError("Impossible de contacter le serveur");
+    } finally {
+      setSubmitting((s) => ({ ...s, [chapterId]: false }));
+    }
   }
 
   return (
@@ -91,10 +112,17 @@ export function CourseView({ initial }: { initial: CourseOverview }) {
             {course.status === "ready" && c.status !== "processing" && (
               <button
                 type="button"
+                disabled={Boolean(submitting[c.id])}
                 onClick={() => generate(c.id, c.status === "ready")}
-                className="self-start rounded-lg border border-white/20 px-3 py-2 text-sm font-semibold"
+                className="self-start rounded-lg border border-white/20 px-3 py-2 text-sm font-semibold disabled:opacity-50"
               >
-                {c.status === "ready" ? "Régénérer" : c.status === "failed" ? "Réessayer" : "Générer les capsules"}
+                {submitting[c.id]
+                  ? "Lancement…"
+                  : c.status === "ready"
+                    ? "Régénérer"
+                    : c.status === "failed"
+                      ? "Réessayer"
+                      : "Générer les capsules"}
               </button>
             )}
           </li>

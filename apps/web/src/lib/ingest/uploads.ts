@@ -17,7 +17,9 @@ export const ACCEPT_ATTRIBUTE = Object.entries(UPLOAD_TYPES)
   .join(",");
 
 export function uploadExtension(filename: string): UploadExtension | null {
-  const ext = filename.split(".").pop()?.toLowerCase() ?? "";
+  const dot = filename.lastIndexOf(".");
+  if (dot < 0) return null;
+  const ext = filename.slice(dot + 1).toLowerCase();
   return ext in UPLOAD_TYPES ? (ext as UploadExtension) : null;
 }
 

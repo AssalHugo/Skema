@@ -120,17 +120,25 @@ export async function extractConcepts(params: {
   });
 
   const concepts = res.data.concepts
-    .map((c) => ({
-      title: c.title.trim().slice(0, 160),
-      summary: c.summary.trim(),
-      keywords: [...new Set(c.keywords.map((k) => k.trim()).filter(Boolean))].slice(0, 8),
-      sourcePages: [...new Set(c.sourcePages)]
+    .map((c) => {
+      const sourcePages = [...new Set(c.sourcePages)]
         .filter((p) => p >= params.pageStart && p <= params.pageEnd)
-        .sort((a, b) => a - b),
-      diagramIds: [
-        ...new Set(c.diagramRefs.map((r) => refs.get(r.trim().toUpperCase())?.id).filter((id) => id !== undefined)),
-      ],
-    }))
+        .sort((a, b) => a - b);
+      if (c.sourcePages.length > 0 && sourcePages.length === 0) {
+        console.warn(
+          `[ingest.concepts] pages hors chapitre (${params.pageStart}–${params.pageEnd}) ignorées pour « ${c.title} » : ${c.sourcePages.join(", ")}`,
+        );
+      }
+      return {
+        title: c.title.trim().slice(0, 160),
+        summary: c.summary.trim(),
+        keywords: [...new Set(c.keywords.map((k) => k.trim()).filter(Boolean))].slice(0, 8),
+        sourcePages,
+        diagramIds: [
+          ...new Set(c.diagramRefs.map((r) => refs.get(r.trim().toUpperCase())?.id).filter((id) => id !== undefined)),
+        ],
+      };
+    })
     .filter((c) => c.title.length > 0);
   if (concepts.length > MAX_CONCEPTS) {
     console.warn(`[ingest.concepts] ${concepts.length} concepts proposés, ${MAX_CONCEPTS} conservés`);

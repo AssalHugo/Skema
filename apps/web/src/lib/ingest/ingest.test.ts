@@ -11,6 +11,7 @@ describe("uploads", () => {
     assert.equal(uploadExtension("cours.pptx"), "pptx");
     assert.equal(uploadExtension("notes.docx"), null);
     assert.equal(uploadExtension("sans-extension"), null);
+    assert.equal(uploadExtension("pdf"), null);
   });
 
   it("dérive un titre lisible du nom de fichier", () => {
@@ -23,6 +24,7 @@ describe("keys", () => {
   it("distingue diaporamas et PDF", () => {
     assert.equal(slideExtension("uploads/u/abc-cours.PPTX"), "pptx");
     assert.equal(slideExtension("uploads/u/abc-cours.pdf"), null);
+    assert.equal(slideExtension("pptx"), null);
   });
 
   it("range les objets dérivés sous courses/<id>/", () => {

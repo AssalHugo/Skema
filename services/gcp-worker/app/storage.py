@@ -48,10 +48,14 @@ def download_to(url: str, dest: Path, max_bytes: int = MAX_DOWNLOAD_BYTES) -> in
     """Télécharge `url` dans `dest` en streaming. Renvoie la taille en octets."""
     check_url(url)
     try:
-        with requests.get(url, stream=True, timeout=(10, 120)) as res:
+        with requests.get(url, stream=True, timeout=(10, 120), allow_redirects=False) as res:
             if res.status_code != 200:
                 raise TransferError(f"lecture refusée ({res.status_code})")
-            declared = int(res.headers.get("content-length") or 0)
+            raw_len = res.headers.get("content-length")
+            try:
+                declared = int(raw_len) if raw_len else 0
+            except ValueError as exc:
+                raise TransferError(f"en-tête Content-Length invalide : {raw_len!r}") from exc
             if declared > max_bytes:
                 raise TransferError(f"fichier trop volumineux ({declared} octets)")
             size = 0
@@ -77,6 +81,7 @@ def upload_file(url: str, src: Path, content_type: str) -> int:
                 data=fh,
                 headers={"Content-Type": content_type, "Content-Length": str(size)},
                 timeout=(10, 300),
+                allow_redirects=False,
             )
     except requests.RequestException as exc:
         raise TransferError(f"écriture impossible : {type(exc).__name__}") from exc

@@ -43,7 +43,7 @@ def to_rect(page: fitz.Page, box: list[float], margin: float) -> fitz.Rect:
     ) & r
 
 
-def encode_webp(img: Image.Image, max_bytes: int) -> tuple[bytes, int]:
+def encode_webp(img: Image.Image, max_bytes: int) -> tuple[bytes, int, tuple[int, int]]:
     """Qualité dégressive, puis réduction de taille si nécessaire.
 
     `method=6` (le plus compact) est lent sur les grandes images : on cherche
@@ -60,18 +60,19 @@ def encode_webp(img: Image.Image, max_bytes: int) -> tuple[bytes, int]:
             data = save(img, q, 4)
             if len(data) <= max_bytes:
                 best = save(img, q, 6)
-                return (best, q) if len(best) <= len(data) else (data, q)
+                chosen = best if len(best) <= len(data) else data
+                return chosen, q, img.size
         if min(img.size) <= 200:
-            return data, q  # cas extrême : on garde la plus petite version
+            return data, q, img.size  # cas extrême : on garde la plus petite version
         # Réduction proportionnelle à l'excès (la taille varie ~ comme la surface).
         scale = max(0.5, min(0.9, (max_bytes / len(data)) ** 0.5 * 0.95))
         img = img.resize((int(img.width * scale), int(img.height * scale)), Image.Resampling.LANCZOS)
 
 
-def cut_text_blocks(page: fitz.Page, clip: fitz.Rect) -> list[str]:
+def cut_text_blocks(page: fitz.Page, clip: fitz.Rect, blocks: list | None = None) -> list[str]:
     """Blocs de texte à cheval sur le bord de la découpe."""
     cut = []
-    for x0, y0, x1, y1, text, *_ in page.get_text("blocks"):
+    for x0, y0, x1, y1, text, *_ in (blocks if blocks is not None else page.get_text("blocks")):
         b = fitz.Rect(x0, y0, x1, y1)
         inter = b & clip
         if not inter.is_empty and b.get_area() > 0:
@@ -81,33 +82,49 @@ def cut_text_blocks(page: fitz.Page, clip: fitz.Rect) -> list[str]:
     return cut
 
 
-def crop_figure(doc: fitz.Document, page_no: int, box: list[float], margin: float, dpi: int, max_bytes: int) -> dict:
+def crop_figure(
+    doc: fitz.Document,
+    page_no: int,
+    box: list[float],
+    margin: float,
+    dpi: int,
+    max_bytes: int,
+    blocks: list | None = None,
+) -> dict:
     page = doc[page_no - 1]
     clip = to_rect(page, box, margin)
     pix = page.get_pixmap(dpi=dpi, clip=clip, alpha=False)
     img = Image.frombytes("RGB", (pix.width, pix.height), pix.samples)
-    data, quality = encode_webp(img, max_bytes)
-    with Image.open(io.BytesIO(data)) as out:
-        width, height = out.size
+    data, quality, (width, height) = encode_webp(img, max_bytes)
     return {
         "width": width,
         "height": height,
         "bytes": len(data),
         "quality": quality,
         "clip": [round(v, 1) for v in clip],
-        "cut_text": cut_text_blocks(page, clip),
+        "cut_text": cut_text_blocks(page, clip, blocks),
         "webp_base64": base64.b64encode(data).decode(),
     }
 
 
 def crop_all(doc: fitz.Document, figures: list[dict], margin: float, dpi: int, max_bytes: int) -> dict:
     crops, invalid = [], []
+    blocks_cache: dict[int, list] = {}
     for i, f in enumerate(figures):
         err = box_error(f["page"], f["box_2d"], doc.page_count)
         if err:
             invalid.append({"index": i, "reason": err})
             continue
-        crops.append({"index": i, "page": f["page"], **crop_figure(doc, f["page"], f["box_2d"], margin, dpi, max_bytes)})
+        page_no = f["page"]
+        if page_no not in blocks_cache:
+            blocks_cache[page_no] = doc[page_no - 1].get_text("blocks")
+        crops.append(
+            {
+                "index": i,
+                "page": page_no,
+                **crop_figure(doc, page_no, f["box_2d"], margin, dpi, max_bytes, blocks_cache[page_no]),
+            }
+        )
     n = len(figures)
     metrics = {
         "figures": n,

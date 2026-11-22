@@ -12,7 +12,10 @@ function putWithProgress(url: string, headers: Record<string, string>, file: Fil
     xhr.open("PUT", url);
     for (const [k, v] of Object.entries(headers)) xhr.setRequestHeader(k, v);
     xhr.upload.onprogress = (e) => e.lengthComputable && onProgress(Math.round((e.loaded / e.total) * 100));
-    xhr.onload = () => (xhr.status < 300 ? resolve() : reject(new Error(`Envoi refusé par le stockage (${xhr.status})`)));
+    xhr.onload = () =>
+      xhr.status >= 200 && xhr.status < 300
+        ? resolve()
+        : reject(new Error(`Envoi refusé par le stockage (${xhr.status})`));
     xhr.onerror = () => reject(new Error("Envoi interrompu (réseau ou CORS du bucket R2)"));
     xhr.send(file);
   });
@@ -35,20 +38,23 @@ export function UploadForm() {
   const [title, setTitle] = useState("");
   const [phase, setPhase] = useState<Phase>("idle");
   const [progress, setProgress] = useState(0);
-  const [error, setError] = useState<string | null>(null);
+  const [fileError, setFileError] = useState<string | null>(null);
+  const [submitError, setSubmitError] = useState<string | null>(null);
 
   function onFile(f: File | null) {
-    setError(null);
+    setFileError(null);
+    setSubmitError(null);
     setFile(f);
     if (f && !title) setTitle(titleFromFilename(f.name));
-    if (f && !uploadExtension(f.name)) setError("Formats acceptés : PDF, PPTX, PPT, ODP");
-    else if (f && f.size > MAX_UPLOAD_BYTES) setError("Fichier trop volumineux (300 Mo maximum)");
+    if (f && !uploadExtension(f.name)) setFileError("Formats acceptés : PDF, PPTX, PPT, ODP");
+    else if (f && f.size === 0) setFileError("Le fichier est vide");
+    else if (f && f.size > MAX_UPLOAD_BYTES) setFileError("Fichier trop volumineux (300 Mo maximum)");
   }
 
   async function onSubmit(e: FormEvent) {
     e.preventDefault();
-    if (!file || error) return;
-    setError(null);
+    if (!file || fileError) return;
+    setSubmitError(null);
     try {
       setPhase("uploading");
       const upload = await postJson<{ url: string; key: string; headers: Record<string, string> }>(
@@ -63,11 +69,12 @@ export function UploadForm() {
       });
       router.push(`/courses/${courseId}`);
     } catch (err) {
-      setError(err instanceof Error ? err.message : "Erreur inattendue");
+      setSubmitError(err instanceof Error ? err.message : "Erreur inattendue");
       setPhase("idle");
     }
   }
 
+  const error = fileError ?? submitError;
   const busy = phase !== "idle";
   const input = "rounded-lg border border-white/20 bg-transparent px-4 py-3";
   return (
@@ -106,7 +113,7 @@ export function UploadForm() {
       )}
       <button
         type="submit"
-        disabled={!file || busy || Boolean(error)}
+        disabled={!file || busy || Boolean(fileError)}
         className="rounded-lg bg-accent px-4 py-3 font-semibold text-black disabled:opacity-50"
       >
         {phase === "uploading" ? `Envoi… ${progress} %` : phase === "registering" ? "Analyse…" : "Importer"}

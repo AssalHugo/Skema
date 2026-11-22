@@ -50,6 +50,13 @@ def test_long_chapter_without_children_is_split(tmp_path):
     assert chapters[1].title == "Gros chapitre (1/3)"
 
 
+def test_long_chapter_respects_custom_max_pages_below_batch_max(tmp_path):
+    toc = [[1, "Intro", 1], [1, "Chapitre", 6]]
+    _, chapters, _ = chapters_of(make_pdf(tmp_path / "c2.pdf", 30, toc=toc), max_pages=20)
+    assert spans(chapters) == [(1, 5), (6, 18), (19, 30)]
+    assert chapters[1].title == "Chapitre (1/2)"
+
+
 def test_per_slide_bookmarks_fall_back(tmp_path):
     toc = [[1, f"Diapo {n}", n] for n in range(1, 41)]
     source, chapters, _ = chapters_of(make_pdf(tmp_path / "d.pdf", 40, toc=toc))

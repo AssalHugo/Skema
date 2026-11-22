@@ -130,7 +130,7 @@ export async function detectFiguresMistral(
   ctx: DetectionContext,
 ): Promise<DetectionResult> {
   const annotationSchema = z.toJSONSchema(
-    z.object({
+    z.strictObject({
       caption: z.string().describe("Légende ou titre visible de l'image, vide si absent"),
       description: z.string().describe("Ce que montre l'image, 1 à 2 phrases en français"),
       is_scientific_figure: z
@@ -156,8 +156,10 @@ export async function detectFiguresMistral(
   const data = MistralOcrResponse.parse(await res.json());
 
   const figures: DetectedFigure[] = [];
+  const clamp = (v: number) => Math.max(0, Math.min(1000, Math.round(v)));
   for (const page of data.pages) {
     const { width, height } = page.dimensions;
+    if (width <= 0 || height <= 0) continue;
     for (const img of page.images) {
       let annotation = MistralAnnotation.parse({});
       try {
@@ -173,7 +175,7 @@ export async function detectFiguresMistral(
           (img.top_left_x / width) * 1000,
           (img.bottom_right_y / height) * 1000,
           (img.bottom_right_x / width) * 1000,
-        ].map((v) => Math.round(v)),
+        ].map(clamp),
         caption: annotation.caption.trim(),
         description: annotation.description.trim() || annotation.caption.trim() || "Schéma du cours",
       });

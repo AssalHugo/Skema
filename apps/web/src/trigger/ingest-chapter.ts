@@ -72,8 +72,13 @@ export const extractBatchFigures = schemaTask({
       detection = await detectFiguresGemini(p.geminiFile, ctx);
     }
 
-    const crop: CropResult = detection.figures.length
-      ? await abortIfPermanent(() => cropBboxes(sourceUrl, detection.figures))
+    let figures = detection.figures;
+    if (figures.length > 300) {
+      logger.warn("Trop de schémas détectés sur un lot, tronqués à 300", { batchLabel, count: figures.length });
+      figures = figures.slice(0, 300);
+    }
+    const crop: CropResult = figures.length
+      ? await abortIfPermanent(() => cropBboxes(sourceUrl, figures))
       : emptyCrop();
 
     // Relance idempotente : on remplace les schémas déjà extraits de ce lot.
@@ -85,7 +90,7 @@ export const extractBatchFigures = schemaTask({
     const rows: (typeof courseDiagrams.$inferInsert)[] = [];
     const cutTextIds: string[] = [];
     for (const c of crop.crops) {
-      const fig = detection.figures[c.index];
+      const fig = figures[c.index];
       const id = crypto.randomUUID();
       const key = courseKeys.diagram(p.courseId, id);
       await uploadBufferToR2({ key, body: Buffer.from(c.webp_base64, "base64"), contentType: "image/webp" });
@@ -285,16 +290,18 @@ export const ingestChapter = schemaTask({
         .returning({ id: concepts.id });
 
       const costUsd = outputs.reduce((s, o) => s + o.costUsd, 0) + extracted.costUsd;
-      await db
-        .update(chapters)
-        .set({ status: "ready", metrics: { ...metrics, concepts: inserted.length, costUsd } })
-        .where(eq(chapters.id, chapterId));
 
-      // 5. Fan-out des moteurs 2 et 1, pour ce chapitre uniquement.
+      // 5. Fan-out des moteurs 2 et 1, pour ce chapitre uniquement (avant de
+      //    marquer le chapitre prêt : évite un état « ready » transitoire en cas d'échec).
       if (inserted.length) {
         const items = inserted.map((c) => ({ payload: { conceptId: c.id } }));
         await Promise.all([generateEpisode.batchTrigger(items), curateYoutube.batchTrigger(items)]);
       }
+
+      await db
+        .update(chapters)
+        .set({ status: "ready", metrics: { ...metrics, concepts: inserted.length, costUsd } })
+        .where(eq(chapters.id, chapterId));
 
       return { chapterId, concepts: inserted.length, diagrams: diagrams.length, costUsd, metrics };
     } finally {

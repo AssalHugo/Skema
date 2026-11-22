@@ -25,43 +25,59 @@ export async function POST(request: Request) {
     if (!uploadExtension(key)) throw new HttpError(415, "Formats acceptés : PDF, PPTX, PPT, ODP");
 
     const db = getDb();
-    // Double clic ou nouvel essai : on renvoie le cours déjà créé pour ce fichier.
+    // Double clic ou nouvel essai : on renvoie le cours déjà créé, sauf s'il est
+    // en échec (on le relance alors de façon atomique).
+    let courseId: string;
+    let isRetry = false;
     const existing = await db.query.courses.findFirst({
       where: and(eq(schema.courses.userId, user.id), eq(schema.courses.sourceR2Key, key)),
     });
-    if (existing) return Response.json({ courseId: existing.id, status: existing.status, existing: true });
+    if (existing) {
+      if (existing.status !== "failed") {
+        return Response.json({ courseId: existing.id, status: existing.status, existing: true });
+      }
+      const [claimed] = await db
+        .update(schema.courses)
+        .set({ status: "processing", error: null })
+        .where(and(eq(schema.courses.id, existing.id), eq(schema.courses.status, "failed")))
+        .returning({ id: schema.courses.id });
+      if (!claimed) return Response.json({ courseId: existing.id, status: "processing", existing: true });
+      courseId = claimed.id;
+      isRetry = true;
+    } else {
+      const head = await headObject(key);
+      if (!head) throw new HttpError(404, "Fichier introuvable sur R2 : l'upload est-il terminé ?");
+      if ((head.ContentLength ?? 0) > MAX_UPLOAD_BYTES) throw new HttpError(413, "Fichier trop volumineux");
 
-    const head = await headObject(key);
-    if (!head) throw new HttpError(404, "Fichier introuvable sur R2 : l'upload est-il terminé ?");
-    if ((head.ContentLength ?? 0) > MAX_UPLOAD_BYTES) throw new HttpError(413, "Fichier trop volumineux");
-
-    const filename = key.slice(prefix.length).replace(/^[0-9a-f-]{36}-/, "");
-    const [course] = await db
-      .insert(schema.courses)
-      .values({
-        userId: user.id,
-        title: title || titleFromFilename(filename),
-        ...(discipline ? { discipline } : {}),
-        sourceR2Key: key,
-      })
-      .returning({ id: schema.courses.id });
+      const filename = key.slice(prefix.length).replace(/^[0-9a-f-]{36}-/, "");
+      const [course] = await db
+        .insert(schema.courses)
+        .values({
+          userId: user.id,
+          title: title || titleFromFilename(filename),
+          ...(discipline ? { discipline } : {}),
+          sourceR2Key: key,
+        })
+        .returning({ id: schema.courses.id });
+      courseId = course.id;
+    }
 
     try {
       const handle = await tasks.trigger<typeof ingestCourse>(
         "ingest-course",
-        { courseId: course.id },
-        { idempotencyKey: `ingest-course:${course.id}`, tags: [`course:${course.id}`, `user:${user.id}`] },
+        { courseId },
+        {
+          ...(isRetry ? {} : { idempotencyKey: `ingest-course:${courseId}` }),
+          tags: [`course:${courseId}`, `user:${user.id}`],
+        },
       );
-      return Response.json(
-        { courseId: course.id, status: "processing", runId: handle.id, publicAccessToken: handle.publicAccessToken },
-        { status: 202 },
-      );
+      return Response.json({ courseId, status: "processing", runId: handle.id }, { status: 202 });
     } catch (err) {
       console.error("[ingest] déclenchement Trigger.dev impossible", err);
       await db
         .update(schema.courses)
         .set({ status: "failed", error: "Déclenchement de l'ingestion impossible" })
-        .where(eq(schema.courses.id, course.id));
+        .where(eq(schema.courses.id, courseId));
       throw new HttpError(502, "Ingestion non lancée (Trigger.dev indisponible)");
     }
   });

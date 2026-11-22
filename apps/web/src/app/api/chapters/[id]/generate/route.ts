@@ -36,7 +36,7 @@ export async function POST(request: Request, ctx: RouteContext<"/api/chapters/[i
     if (!claimed) {
       throw new HttpError(
         409,
-        row.status === "processing" ? "Génération déjà en cours" : "Chapitre déjà généré (?force=1 pour régénérer)",
+        row.status === "ready" && !force ? "Chapitre déjà généré (?force=1 pour régénérer)" : "Génération déjà en cours",
       );
     }
 
@@ -46,10 +46,7 @@ export async function POST(request: Request, ctx: RouteContext<"/api/chapters/[i
         { chapterId: id },
         { tags: [`chapter:${id}`, `user:${user.id}`] },
       );
-      return Response.json(
-        { chapterId: id, status: "processing", runId: handle.id, publicAccessToken: handle.publicAccessToken },
-        { status: 202 },
-      );
+      return Response.json({ chapterId: id, status: "processing", runId: handle.id }, { status: 202 });
     } catch (err) {
       console.error("[generate] déclenchement Trigger.dev impossible", err);
       await db.update(chapters).set({ status: row.status }).where(eq(chapters.id, id));

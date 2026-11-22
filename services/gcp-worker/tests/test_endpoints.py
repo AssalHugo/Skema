@@ -57,6 +57,47 @@ def test_check_url_allowlist(monkeypatch):
         storage.check_url("https://acc.r2.cloudflarestorage.com/a.pdf")
 
 
+def test_storage_disables_redirects_and_validates_content_length(monkeypatch, tmp_path):
+    seen: list[bool] = []
+
+    class FakeResp:
+        def __init__(self, status_code: int, headers: dict[str, str]):
+            self.status_code = status_code
+            self.headers = headers
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *args):
+            return False
+
+    def fake_get(url, **kwargs):
+        seen.append(kwargs.get("allow_redirects"))
+        return FakeResp(302, {"location": "http://169.254.169.254/"})
+
+    monkeypatch.setattr(storage.requests, "get", fake_get)
+    with pytest.raises(storage.TransferError, match="302"):
+        storage.download_to("https://acc.r2.cloudflarestorage.com/skema/a.pdf", tmp_path / "a.pdf")
+    assert seen == [False]
+
+    monkeypatch.setattr(storage.requests, "get", lambda url, **kw: FakeResp(200, {"content-length": "abc"}))
+    with pytest.raises(storage.TransferError, match="Content-Length"):
+        storage.download_to("https://acc.r2.cloudflarestorage.com/skema/a.pdf", tmp_path / "a.pdf")
+
+    put_redirects: list[bool] = []
+
+    def fake_put(url, **kwargs):
+        put_redirects.append(kwargs.get("allow_redirects"))
+        return FakeResp(302, {})
+
+    monkeypatch.setattr(storage.requests, "put", fake_put)
+    src = tmp_path / "up.pdf"
+    src.write_bytes(b"pdf")
+    with pytest.raises(storage.TransferError, match="302"):
+        storage.upload_file("https://acc.r2.cloudflarestorage.com/skema/a.pdf", src, "application/pdf")
+    assert put_redirects == [False]
+
+
 def test_disallowed_source_url_is_422(client, fake_r2):
     res = client.post("/split-and-inspect", json={"source_url": "https://evil.example.com/a.pdf"})
     assert res.status_code == 422

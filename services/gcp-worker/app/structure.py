@@ -242,9 +242,10 @@ def normalize(chapters: list[Chapter], page_count: int, min_pages: int, max_page
 
     # Découpe des chapitres trop longs (sans sous-signets exploitables).
     out: list[Chapter] = []
+    part_max = min(BATCH_MAX_PAGES, max_pages)
     for c in merged:
         if c.pages > max_pages:
-            parts = even_ranges(c.page_start, c.page_end, BATCH_MAX_PAGES)
+            parts = even_ranges(c.page_start, c.page_end, part_max)
             out.extend(Chapter(f"{c.title} ({i}/{len(parts)})", s, e) for i, (s, e) in enumerate(parts, 1))
         else:
             out.append(c)

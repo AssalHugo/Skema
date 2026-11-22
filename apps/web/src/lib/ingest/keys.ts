@@ -15,6 +15,8 @@ export type SlideExtension = (typeof SLIDE_EXTENSIONS)[number];
 
 /** Extension de diaporama d'une clé, ou `null` pour un PDF. */
 export function slideExtension(key: string): SlideExtension | null {
-  const ext = key.split(".").pop()?.toLowerCase();
-  return (SLIDE_EXTENSIONS as readonly string[]).includes(ext ?? "") ? (ext as SlideExtension) : null;
+  const dot = key.lastIndexOf(".");
+  if (dot < 0) return null;
+  const ext = key.slice(dot + 1).toLowerCase();
+  return (SLIDE_EXTENSIONS as readonly string[]).includes(ext) ? (ext as SlideExtension) : null;
 }
