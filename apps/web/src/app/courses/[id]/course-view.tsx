@@ -12,6 +12,15 @@ const STATUS_LABEL: Record<string, string> = {
   failed: "Échec",
 };
 
+const EPISODE_LABEL: Record<string, string> = {
+  pending: "en attente",
+  scripting: "script…",
+  tts: "voix-off…",
+  ready: "",
+  failed: "échec",
+};
+const EPISODE_BUSY = new Set(["pending", "scripting", "tts"]);
+
 const STRUCTURE_LABEL: Record<string, string> = {
   outline: "signets du PDF",
   headings: "titres « Chapitre … » détectés",
@@ -24,7 +33,9 @@ export function CourseView({ initial }: { initial: CourseOverview }) {
   const [error, setError] = useState<string | null>(null);
   const [submitting, setSubmitting] = useState<Record<string, boolean>>({});
   const { course, chapters } = data;
-  const busy = course.status === "processing" || chapters.some((c) => c.status === "processing");
+  const busy =
+    course.status === "processing" ||
+    chapters.some((c) => c.status === "processing" || c.episodes.some((e) => EPISODE_BUSY.has(e.status)));
 
   const refresh = useCallback(async () => {
     try {
@@ -107,6 +118,31 @@ export function CourseView({ initial }: { initial: CourseOverview }) {
                   </span>
                 )}
               </p>
+            )}
+            {c.status === "ready" && c.episodes.length > 0 && (
+              <ul className="flex flex-col gap-1 text-sm">
+                <li className="text-muted">
+                  Capsules : {c.episodes.filter((e) => e.status === "ready").length}/{c.episodes.length} prêtes
+                </li>
+                {c.episodes.map((e) => (
+                  <li key={e.id} className="flex justify-between gap-3">
+                    {e.status === "ready" || e.status === "failed" ? (
+                      <Link
+                        href={`/episodes/${e.id}`}
+                        className="truncate underline underline-offset-2"
+                        title={e.error ?? undefined}
+                      >
+                        {e.title}
+                      </Link>
+                    ) : (
+                      <span className="truncate">{e.title}</span>
+                    )}
+                    <span className={`shrink-0 ${e.status === "failed" ? "text-red-400" : "text-muted"}`}>
+                      {e.status === "ready" && e.durationSec ? `${Math.round(e.durationSec)} s` : EPISODE_LABEL[e.status]}
+                    </span>
+                  </li>
+                ))}
+              </ul>
             )}
             {c.status === "failed" && <p className="text-sm text-red-400">{c.error}</p>}
             {course.status === "ready" && c.status !== "processing" && (

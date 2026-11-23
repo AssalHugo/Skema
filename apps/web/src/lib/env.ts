@@ -70,3 +70,18 @@ export const ingestEnv = lazy(
     MISTRAL_API_KEY: emptyToUndefined(z.string().min(1).optional()),
   }),
 );
+
+export const ttsEnv = lazy(
+  z.object({
+    // Voix par défaut (validée en S.3) ; tous les appels passent par gcp-worker /tts.
+    TTS_VOICE: emptyToUndefined(z.string().regex(/^[a-z]{2,3}-[A-Z]{2}-[\w-]+$/).default("fr-FR-Neural2-F")),
+    // Une mark par mot affiché : l'interpolation (4) a échoué en S.3.
+    TTS_MARK_EVERY: emptyToUndefined(z.coerce.number().int().min(1).max(10).default(1)),
+    // Repli utilisé seulement si la synthèse principale échoue ou rate les seuils de S.3.
+    TTS_FALLBACK: emptyToUndefined(z.enum(["none", "wavenet", "scribe"]).default("none")),
+    // Facultatif : voix du repli WaveNet (défaut : même lettre que TTS_VOICE).
+    TTS_FALLBACK_VOICE: emptyToUndefined(z.string().regex(/^[a-z]{2,3}-[A-Z]{2}-[\w-]+$/).optional()),
+    TTS_MP3_KBPS: emptyToUndefined(z.coerce.number().int().min(32).max(128).default(64)),
+    ELEVENLABS_API_KEY: emptyToUndefined(z.string().min(1).optional()),
+  }),
+);

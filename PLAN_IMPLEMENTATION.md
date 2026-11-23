@@ -102,7 +102,7 @@ Ne sont testées **que** les briques de la stack retenue. Chaque test a des seui
 ## Phase 2 — Moteur 2 : capsules générées
 
 1. Contrat `GeneratedStoryboard` complété : `displaySegments`, `spokenText` (ou `ssmlWithSub` si S.3 valide `<sub>`), `quiz`.
-2. `trigger/generate-episode.ts` : script de 150 à 210 mots, accroche en moins de 5 s, 4 à 7 scènes, quiz à 4 choix (modèle QUALITY).
+2. `trigger/generate-episode.ts` : script de 150 à 210 mots, accroche en moins de 5 s, 4 à 7 scènes, quiz à 4 choix (modèle QUALITY), ancré dans le texte natif des pages du concept (`gcp-worker /page-text`) et ses schémas (images jointes).
 3. `lib/tts/adapter.ts` : `TTSProvider → { audioBuffer, mimeType, durationMs, wordTimings }`.
    - **`GoogleNeural2Provider`** (par défaut) : appelle `gcp-worker /tts`, qui fait les étapes suivantes :
      1. construit le SSML avec `<mark name="i"/>` tous les `TTS_MARK_EVERY` mots ;

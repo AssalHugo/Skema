@@ -7,7 +7,7 @@ PWA de micro-learning vertical pour les cours universitaires. Architecture : `Ar
 | Dossier | Rôle |
 |---|---|
 | `apps/web` | Next.js 16 (App Router, TS strict, Tailwind 4), Drizzle/Neon, Better Auth, R2, Gemini, Trigger.dev |
-| `services/gcp-worker` | FastAPI sur Cloud Run (PyMuPDF, Pillow, LibreOffice, ffmpeg) : `/split-and-inspect`, `/crop-bboxes`, `/pptx-to-pdf` ; TTS Google (phase 2) via le compte de service attaché. Aucun identifiant R2 : lecture/écriture par URL pré-signées, limitées aux hôtes `ALLOWED_URL_HOSTS` (défaut `r2.cloudflarestorage.com`) |
+| `services/gcp-worker` | FastAPI sur Cloud Run (PyMuPDF, Pillow, LibreOffice, ffmpeg) : `/split-and-inspect`, `/crop-bboxes`, `/pptx-to-pdf`, `/page-text`, `/tts` (Google TTS v1beta1 via le compte de service attaché). Aucun identifiant R2 : lecture/écriture par URL pré-signées, limitées aux hôtes `ALLOWED_URL_HOSTS` (défaut `r2.cloudflarestorage.com`) |
 | `infra/gcp` | Scripts `gcloud` : projets prod + dev, APIs, budgets, compte de service, déploiement du worker |
 | `spikes` | Phase S (validée) |
 
@@ -57,7 +57,36 @@ cd services/gcp-worker && python -m venv .venv && .venv/bin/pip install -r requi
    ```
    Conseillé : règle de cycle de vie qui supprime `_checks/` après 1 jour.
 4. **Better Auth** : `BETTER_AUTH_SECRET=$(openssl rand -base64 32)`. Google OAuth facultatif (redirect URI `<BETTER_AUTH_URL>/api/auth/callback/google`).
-5. **Trigger.dev** : créer le projet, renseigner `TRIGGER_PROJECT_REF` et `TRIGGER_SECRET_KEY`. Dans les variables d'environnement du projet Trigger.dev, recopier `DATABASE_URL`, `R2_*`, `GEMINI_*`, `GCP_WORKER_URL`, `GCP_WORKER_SECRET` et `PDF_EXTRACTOR` (les tâches tournent chez Trigger.dev, pas sur Vercel).
+5. **Trigger.dev** : créer le projet, renseigner `TRIGGER_PROJECT_REF` et `TRIGGER_SECRET_KEY`. Dans les variables d'environnement du projet Trigger.dev, recopier `DATABASE_URL`, `R2_*`, `GEMINI_*`, `GCP_WORKER_URL`, `GCP_WORKER_SECRET`, `PDF_EXTRACTOR` et `TTS_*` (les tâches tournent chez Trigger.dev, pas sur Vercel).
+
+## Phase 2 — capsules générées (moteur 2)
+
+```
+ingest-chapter ──batchTrigger──▶ generate-episode (un concept, file generate-episode, 5 en parallèle)
+    ├─ contexte : résumé du concept, texte natif de ses pages (/page-text sur les lots), ≤ 6 schémas (WebP joints)
+    ├─ script Gemini QUALITY (Zod) : 150–210 mots annotés [affiché|prononcé], accroche ≤ 12 mots,
+    │  4 à 7 scènes (diagram + caméra focusX/focusY, kinetic_text, comparison_card), quiz à 4 choix
+    ├─ toSsmlUnits() : un mot affiché = un fragment SSML (<sub alias> selon les règles de S.3)
+    ├─ gcp-worker /tts : <mark> par mot, requêtes ≤ 4 500 octets coupées en fin de phrase,
+    │  v1beta1 LINEAR16 + SSML_MARK, PCM concaténé et timepoints décalés, MP3 mono 64 kbps (ffmpeg)
+    │  └─ seuils de S.3 recalculés (marks ≥ 98 %, monotonie, ≤ 2 mots < 50 ms) → repli TTS_FALLBACK si échec
+    ├─ MP3 → R2 courses/<id>/episodes/<ep>/<version>.mp3, caractères TTS → ai_usage (palier gratuit déduit)
+    └─ storyboard_json v1.1 (scènes calées sur les mots, displaySegments, wordTimings, quiz mélangé) → episodes ready
+```
+
+- **Contrat** : `apps/web/src/lib/storyboard/types.ts` (`GeneratedStoryboard` v1.1, importable côté client pour la phase 3).
+- **Prononciation** : `apps/web/src/lib/tts/ssml.ts` (`toSsmlUnits`, `toSsml`, `findUnannotatedTerms`), tests sur les cas de S.3 (ATP, 5', 7,8, 37 °C, 10⁻⁶ mol/L). Les termes non annotés (sigles, nombres, unités) sont signalés dans `episodes.metrics`.
+- **TTS** : `apps/web/src/lib/tts/adapter.ts` — `GoogleNeural2Provider` (défaut), `GoogleWavenetProvider` (`TTS_FALLBACK=wavenet`) ; `ScribeAlignedProvider` et `ElevenLabsV4TurboProvider` restent désactivés (S.3 validé). L'authentification Google ne quitte pas Cloud Run.
+- **Relance** : une seule capsule générée par concept (index unique partiel) ; `POST /api/episodes/<id>/regenerate` la régénère.
+- **Contrôle** : `/courses/<id>` liste les capsules ; `/episodes/<id>` les lit (sous-titres karaoké, 1x / 1,25x / 1,5x, visuels, quiz) et affiche les contrôles : mots, accroche < 5 s, seuils de S.3, termes non annotés, coût.
+- Migration : `pnpm db:migrate` applique `0003_episodes_generation.sql` (`episodes.metrics`, `episodes.error`, index unique `episodes_generated_concept_uq`).
+
+### Phase 2 — critères de fin
+
+- [ ] Worker redéployé avec `/tts` et `/page-text` (`PROJECT_ID=skema-prod ./infra/gcp/deploy-worker.sh`), variables `TTS_*` recopiées dans Trigger.dev
+- [ ] 5 capsules réelles générées : seuils de S.3 ✅ dans `/episodes/<id>`
+- [ ] Prononciation correcte à l'écoute, sous-titres calés à 1x et 1,25x
+- [ ] Facturation des marks vérifiée dans *Billing → Reports* (`ai_usage.metadata.charsWithoutMarks` donne l'écart)
 
 ## Phase 1 — ingestion
 

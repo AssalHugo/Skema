@@ -18,6 +18,7 @@ import {
   real,
   text,
   timestamp,
+  uniqueIndex,
   uuid,
 } from "drizzle-orm/pg-core";
 
@@ -268,11 +269,18 @@ export const episodes = pgTable(
     modelUsed: text("model_used"),
     ttsVoice: text("tts_voice"),
     costUsd: numeric("cost_usd", { precision: 10, scale: 6, mode: "number" }),
+    /** Mesures de génération (mots, accroche, verdict des seuils de S.3, tentatives TTS…). */
+    metrics: jsonb("metrics").$type<Record<string, unknown>>(),
+    error: text("error"),
     createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
   },
   (t) => [
     index("episodes_course_id_idx").on(t.courseId),
     index("episodes_concept_id_idx").on(t.conceptId),
+    // Une seule capsule générée (moteur 2) par concept : relance idempotente.
+    uniqueIndex("episodes_generated_concept_uq")
+      .on(t.conceptId)
+      .where(sql`engine_type = 'generated'`),
   ],
 );
 

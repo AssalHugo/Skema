@@ -4,8 +4,10 @@ Phase 1 (ingestion) :
 - POST /split-and-inspect : chapitres + lots de 25–30 pages, ou écriture des lots ;
 - POST /crop-bboxes : découpe des schémas en WebP (< 100 Ko) + métrique `cut_text` ;
 - POST /pptx-to-pdf : conversion LibreOffice headless.
-Phase 2 : POST /tts (Google Cloud TTS v1beta1 + <mark>, auth par le compte de
-service attaché au service Cloud Run, via ADC : aucune clé JSON).
+Phase 2 (capsules générées) :
+- POST /tts : Google Cloud TTS v1beta1 + <mark>, MP3 et horodatage par mot
+  (auth par le compte de service attaché au service Cloud Run, via ADC : aucune clé JSON) ;
+- POST /page-text : texte de quelques pages (ancrage du script dans le cours).
 
 Le worker n'a aucun identifiant R2 : il lit et écrit par URL pré-signées.
 """
@@ -23,11 +25,11 @@ import pymupdf as fitz
 from fastapi import Depends, FastAPI, Header, HTTPException, status
 from pydantic import BaseModel, Field, model_validator
 
-from . import crop, office, storage, structure
+from . import crop, office, storage, structure, tts
 
 app = FastAPI(
     title="skema-gcp-worker",
-    version="0.2.0",
+    version="0.3.0",
     docs_url=None,
     redoc_url=None,
     openapi_url=None,
@@ -93,6 +95,9 @@ def errors_as_http() -> Iterator[None]:
         raise HTTPException(status.HTTP_502_BAD_GATEWAY, str(exc)) from exc
     except office.ConversionError as exc:
         raise HTTPException(status.HTTP_422_UNPROCESSABLE_CONTENT, str(exc)) from exc
+    except tts.TtsError as exc:
+        code = status.HTTP_422_UNPROCESSABLE_CONTENT if exc.permanent else status.HTTP_502_BAD_GATEWAY
+        raise HTTPException(code, str(exc)) from exc
 
 
 def open_pdf(path: Path) -> fitz.Document:
@@ -249,3 +254,70 @@ def pptx_to_pdf(req: ConvertRequest) -> dict:
         doc.close()
         size = storage.upload_file(req.put_url, pdf, "application/pdf")
         return {"page_count": pages, "bytes": size}
+
+
+# ---------------------------------------------------------------------------
+# POST /page-text
+# ---------------------------------------------------------------------------
+
+
+class PageTextRequest(BaseModel):
+    source_url: str
+    pages: list[int] = Field(min_length=1, max_length=40, description="1 = première page du PDF pointé")
+    max_chars_per_page: int = Field(4000, ge=200, le=20_000)
+
+
+@app.post("/page-text", dependencies=Protected)
+def page_text(req: PageTextRequest) -> dict:
+    """Texte natif des pages demandées (pages hors document ignorées)."""
+    with errors_as_http(), workdir() as tmp:
+        src = tmp / "source.pdf"
+        storage.download_to(req.source_url, src)
+        doc = open_pdf(src)
+        try:
+            out = []
+            for n in sorted(set(req.pages)):
+                if 1 <= n <= doc.page_count:
+                    text = " ".join(doc[n - 1].get_text("text").split())
+                    out.append({"page": n, "text": text[: req.max_chars_per_page]})
+            return {"page_count": doc.page_count, "pages": out}
+        finally:
+            doc.close()
+
+
+# ---------------------------------------------------------------------------
+# POST /tts
+# ---------------------------------------------------------------------------
+
+
+class TtsUnit(BaseModel):
+    word: str = Field(min_length=1, max_length=200, description="Mot tel qu'affiché (sous-titres)")
+    ssml: str = Field(min_length=1, max_length=1000, description="Fragment SSML : texte échappé, <sub alias> permis")
+
+
+class TtsRequest(BaseModel):
+    units: list[TtsUnit] = Field(min_length=1, max_length=2000)
+    voice: str = Field(
+        default_factory=lambda: os.environ.get("TTS_VOICE", "fr-FR-Neural2-F"),
+        pattern=r"^[a-z]{2,3}-[A-Z]{2}-[\w-]+$",
+    )
+    language_code: str | None = Field(None, pattern=r"^[a-z]{2,3}-[A-Z]{2}$")
+    speaking_rate: float = Field(1.0, ge=0.5, le=2.0)
+    mark_every: int = Field(1, ge=0, le=10, description="0 : sans marks (pas d'horodatage exact)")
+    sample_rate: int = Field(tts.SAMPLE_RATE, ge=16000, le=48000)
+    mp3_kbps: int = Field(64, ge=32, le=128)
+
+
+@app.post("/tts", dependencies=Protected)
+def synthesize(req: TtsRequest) -> dict:
+    """MP3 (base64) + horodatage de chaque mot affiché + verdict des seuils de S.3."""
+    with errors_as_http():
+        return tts.synthesize(
+            [tts.Unit(u.word, u.ssml) for u in req.units],
+            voice=req.voice,
+            language_code=req.language_code,
+            speaking_rate=req.speaking_rate,
+            mark_every=req.mark_every,
+            sample_rate=req.sample_rate,
+            mp3_kbps=req.mp3_kbps,
+        )
