@@ -49,6 +49,7 @@ export function VerticalFeed({
   const audioRef = useRef<HTMLAudioElement>(null);
   const [active, setActive] = useState(0);
   const [started, setStarted] = useState(false);
+  const [starting, setStarting] = useState(false);
   const [rate, setRate] = useState(1);
 
   useEffect(() => {
@@ -101,7 +102,10 @@ export function VerticalFeed({
       if (e.key === "ArrowDown" || e.key === "PageDown") scrollToIndex(Math.min(items.length - 1, active + 1));
       else if (e.key === "ArrowUp" || e.key === "PageUp") scrollToIndex(Math.max(0, active - 1));
       else if (e.key === " " && audioRef.current) {
+        const target = e.target as HTMLElement | null;
+        if (target?.closest("button, a, input, textarea, select")) return;
         const audio = audioRef.current;
+        if (audio.ended) return;
         if (audio.paused) void audio.play().catch(() => {});
         else audio.pause();
       } else return;
@@ -113,7 +117,8 @@ export function VerticalFeed({
 
   async function start() {
     const audio = audioRef.current;
-    if (!audio || items.length === 0) return;
+    if (!audio || items.length === 0 || starting) return;
+    setStarting(true);
     // Déverrouillage iOS : la première lecture doit partir du geste utilisateur.
     audio.src = new URL(items[active].storyboard.audioUrl, window.location.href).href;
     audio.currentTime = 0;
@@ -124,6 +129,7 @@ export function VerticalFeed({
       /* refus : le lecteur affichera « Activer le son » */
     }
     setStarted(true);
+    setStarting(false);
   }
 
   if (items.length === 0) {
@@ -186,11 +192,12 @@ export function VerticalFeed({
           </div>
           <motion.button
             type="button"
+            disabled={starting}
             whileTap={{ scale: 0.96 }}
             onClick={start}
-            className="w-full max-w-xs rounded-2xl bg-accent py-4 text-lg font-black text-black shadow-[0_10px_40px_-10px_rgba(52,211,153,.7)]"
+            className="w-full max-w-xs rounded-2xl bg-accent py-4 text-lg font-black text-black shadow-[0_10px_40px_-10px_rgba(52,211,153,.7)] disabled:opacity-70"
           >
-            ▶ Lancer la session
+            {starting ? "Démarrage…" : "▶ Lancer la session"}
           </motion.button>
           <p className="max-w-xs text-xs text-white/40">Active le son. Swipe vers le haut pour passer à la capsule suivante, touche l&apos;écran pour mettre en pause.</p>
           <Link href={exitHref} className="text-sm text-white/50 underline underline-offset-4">

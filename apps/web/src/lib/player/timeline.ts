@@ -147,6 +147,8 @@ export interface CameraPlan {
   /** Durée du travelling (ms), proportionnelle à la distance. */
   moveMs: number;
   box: ContentBox;
+  /** Facteur de sur-échantillonnage du schéma (précalculé pour éviter un scan par image). */
+  oversample: number;
 }
 
 /** Ease-in-out sinusoïdal : vitesse de pointe ×1,57 (contre ×3 en cubique), plus doux pour une caméra. */
@@ -190,6 +192,7 @@ export function cameraFrameAt(scene: Pick<StoryboardScene, "startMs" | "endMs">,
  */
 export function cameraPlans(scenes: readonly StoryboardScene[]): (CameraPlan | null)[] {
   const plans: (CameraPlan | null)[] = [];
+  const oversamples = new Map<string, number>();
   scenes.forEach((s, i) => {
     if (s.visualType !== "diagram" || !s.diagramUrl) {
       plans.push(null);
@@ -203,7 +206,12 @@ export function cameraPlans(scenes: readonly StoryboardScene[]): (CameraPlan | n
       prev && prevPlan && prev.diagramUrl === s.diagramUrl
         ? cameraFrameAt(prev, prevPlan, prev.endMs)
         : cameraAt(s.cameraMotion, 0, box);
-    plans.push({ from, to, moveMs: moveDuration(from, to), box });
+    let oversample = oversamples.get(s.diagramUrl);
+    if (oversample === undefined) {
+      oversample = diagramOversample(scenes, s.diagramUrl);
+      oversamples.set(s.diagramUrl, oversample);
+    }
+    plans.push({ from, to, moveMs: moveDuration(from, to), box, oversample });
   });
   return plans;
 }
@@ -268,15 +276,24 @@ export class SmoothClock {
   }
 }
 
+/** Visibilité du titre d'accroche en début de capsule. */
+export function hookVisible(hookEndMs: number, t: number): boolean {
+  return t <= Math.max(hookEndMs, 1500) + 600;
+}
+
 /**
  * Clé de rendu React : ne change que quand le texte affiché change (mot, ligne,
- * scène, apparition des lignes d'une carte). Le reste (caméra, barre de
+ * scène, accroche, apparition des lignes d'une carte). Le reste (caméra, barre de
  * progression) est peint directement à chaque image, sans re-rendu.
  */
-export function renderKey(sb: { scenes: readonly StoryboardScene[]; wordTimings: readonly WordTimestamp[] }, t: number): string {
+export function renderKey(
+  sb: { scenes: readonly StoryboardScene[]; wordTimings: readonly WordTimestamp[]; hookEndMs?: number },
+  t: number,
+): string {
   const w = indexAt(sb.wordTimings, t);
   const wordDone = w >= 0 && t >= sb.wordTimings[w].endMs;
   const si = Math.max(0, indexAt(sb.scenes, t));
   const step = sb.scenes[si]?.visualType === "comparison_card" ? Math.floor(sceneProgress(sb.scenes[si], t) * 20) : 0;
-  return `${w}|${wordDone ? 1 : 0}|${si}|${step}`;
+  const hook = sb.hookEndMs !== undefined && hookVisible(sb.hookEndMs, t) ? 1 : 0;
+  return `${w}|${wordDone ? 1 : 0}|${si}|${step}|${hook}`;
 }

@@ -7,7 +7,7 @@ import {
   cameraFrameAt,
   cameraPlans,
   cameraTransform,
-  diagramOversample,
+  hookVisible,
   indexAt,
   renderKey,
   sceneProgress,
@@ -57,6 +57,7 @@ export function LiveCapsulePlayer({
   const [ended, setEnded] = useState(false);
   const [blocked, setBlocked] = useState(false);
   const maxTimeRef = useRef(0);
+  const lastReportedPctRef = useRef(0);
   /** Temps lissé de l'image courante (peinture directe, sans re-rendu). */
   const timeRef = useRef(0);
   const renderKeyRef = useRef("");
@@ -73,9 +74,8 @@ export function LiveCapsulePlayer({
       const scene = sb.scenes[si];
       const plan = plans[si];
       const img = cameraElRef.current;
-      if (img && plan && scene.diagramUrl) {
-        const oversample = diagramOversample(sb.scenes, scene.diagramUrl);
-        img.style.transform = cameraTransform(cameraFrameAt(scene, plan, t), oversample);
+      if (img && plan && scene?.diagramUrl) {
+        img.style.transform = cameraTransform(cameraFrameAt(scene, plan, t), plan.oversample);
       }
       barRefs.current.forEach((bar, i) => {
         if (!bar) return;
@@ -117,45 +117,76 @@ export function LiveCapsulePlayer({
   useEffect(() => {
     const audio = audioRef.current;
     if (!active || !started || !audio) return;
+    let cancelled = false;
     const url = new URL(sb.audioUrl, window.location.href).href;
     if (audio.src !== url) {
       audio.src = url;
       audio.currentTime = 0;
+      clock.reset(0);
     }
     audio.playbackRate = rate;
+    const flushProgress = () => {
+      const pct = watchedPct(maxTimeRef.current, sb.totalDurationMs);
+      if (pct > lastReportedPctRef.current && pct < 100) {
+        lastReportedPctRef.current = pct;
+        reportProgress({ episodeId: item.episodeId, watchedPct: pct });
+      }
+    };
     const onPlay = () => {
+      if (cancelled) return;
       setPlaying(true);
       setEnded(false);
       setBlocked(false);
     };
     const onPause = () => {
+      if (cancelled) return;
       setPlaying(false);
       clock.reset(audio.currentTime * 1000);
       showTime(audio.currentTime * 1000);
     };
     const onEnded = () => {
+      if (cancelled) return;
       setPlaying(false);
       setEnded(true);
       showTime(sb.totalDurationMs);
       maxTimeRef.current = sb.totalDurationMs;
-      reportProgress({ episodeId: item.episodeId, watchedPct: 100 });
+      if (lastReportedPctRef.current < 100) {
+        lastReportedPctRef.current = 100;
+        reportProgress({ episodeId: item.episodeId, watchedPct: 100 });
+      }
+    };
+    const onVisibilityChange = () => {
+      if (document.visibilityState === "hidden") flushProgress();
     };
     audio.addEventListener("play", onPlay);
     audio.addEventListener("pause", onPause);
     audio.addEventListener("ended", onEnded);
+    window.addEventListener("pagehide", flushProgress);
+    document.addEventListener("visibilitychange", onVisibilityChange);
     // La 1re capsule a déjà démarré dans le geste « Lancer la session » : l'événement
     // `play` est passé avant l'abonnement, d'où la synchronisation à la résolution.
-    audio.play().then(onPlay, () => setBlocked(true));
+    audio.play().then(onPlay, (err: unknown) => {
+      if (cancelled) return;
+      if (err instanceof DOMException && err.name === "AbortError") return;
+      setBlocked(true);
+    });
     if ("mediaSession" in navigator) {
       navigator.mediaSession.metadata = new MediaMetadata({ title: item.title, artist: item.courseTitle, album: "Skema" });
     }
     return () => {
+      cancelled = true;
       audio.removeEventListener("play", onPlay);
       audio.removeEventListener("pause", onPause);
       audio.removeEventListener("ended", onEnded);
+      window.removeEventListener("pagehide", flushProgress);
+      document.removeEventListener("visibilitychange", onVisibilityChange);
       audio.pause();
-      const pct = watchedPct(maxTimeRef.current, sb.totalDurationMs);
-      if (pct > 0 && pct < 100) reportProgress({ episodeId: item.episodeId, watchedPct: pct });
+      setPlaying(false);
+      setBlocked(false);
+      setEnded(false);
+      clock.reset(0);
+      showTime(0);
+      flushProgress();
     };
     // `rate` est appliqué par l'effet suivant : il ne doit pas relancer la capsule.
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -208,7 +239,7 @@ export function LiveCapsulePlayer({
 
   const sceneIndex = Math.max(0, indexAt(sb.scenes, timeMs));
   const scene = sb.scenes[sceneIndex];
-  const showHook = timeMs <= Math.max(sb.hookEndMs, 1500) + 600;
+  const showHook = hookVisible(sb.hookEndMs, timeMs);
   const paused = started && active && !playing && !ended && !blocked;
 
   return (
@@ -276,7 +307,7 @@ export function LiveCapsulePlayer({
               scene={scene}
               timeMs={timeMs}
               cameraRef={cameraRef}
-              oversample={scene.diagramUrl ? diagramOversample(sb.scenes, scene.diagramUrl) : 1}
+              oversample={plans[sceneIndex]?.oversample ?? 1}
             />
           </motion.div>
         </AnimatePresence>

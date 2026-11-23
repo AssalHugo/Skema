@@ -7,7 +7,7 @@ import { getFeedForUser } from "@/lib/feed/queries";
 
 export const metadata = { title: "Session · Skema" };
 
-const Params = z.object({ course: z.uuid().optional(), chapter: z.uuid().optional() });
+const Uuid = z.uuid();
 
 /** Feed vertical de révision : `/feed`, `/feed?course=<id>`, `/feed?chapter=<id>`. */
 export default function FeedPage({ searchParams }: PageProps<"/feed">) {
@@ -22,11 +22,12 @@ async function FeedSection({ searchParams }: { searchParams: PageProps<"/feed">[
   const session = await getSession();
   if (!session) redirect("/login");
   const raw = await searchParams;
-  const parsed = Params.safeParse({
-    course: typeof raw.course === "string" ? raw.course : undefined,
-    chapter: typeof raw.chapter === "string" ? raw.chapter : undefined,
-  });
-  const filter = parsed.success ? { courseId: parsed.data.course, chapterId: parsed.data.chapter } : {};
+  const course = typeof raw.course === "string" ? Uuid.safeParse(raw.course) : null;
+  const chapter = typeof raw.chapter === "string" ? Uuid.safeParse(raw.chapter) : null;
+  const filter = {
+    courseId: course?.success ? course.data : undefined,
+    chapterId: chapter?.success ? chapter.data : undefined,
+  };
   const items = await getFeedForUser(session.user.id, filter);
   const title = filter.chapterId
     ? (items[0]?.chapterTitle ?? "Chapitre")

@@ -179,9 +179,10 @@ describe("caméra continue", () => {
     assert.ok(cameraFrameAt(scenes[0], plans[0]!, 5000).scale > atMove.scale);
   });
 
-  it("sur-échantillonnage borné à 2", () => {
+  it("sur-échantillonnage borné à 2 et précalculé dans le plan", () => {
     assert.equal(diagramOversample(scenes, "/a.webp"), 2);
     assert.equal(diagramOversample(scenes, "/b.webp"), 1.05);
+    assert.equal(plans[0]!.oversample, 2);
   });
 });
 
@@ -222,10 +223,12 @@ describe("horloge lissée", () => {
 });
 
 describe("renderKey", () => {
-  it("ne change qu'aux frontières de mots", () => {
-    const sb = { scenes: [diagramScene("s1", 0, 2000, "/a", 50, 1)], wordTimings: words };
+  it("ne change qu'aux frontières de mots et à la fin de l'accroche", () => {
+    const sb = { scenes: [diagramScene("s1", 0, 4000, "/a", 50, 1)], wordTimings: words, hookEndMs: 2000 };
     assert.equal(renderKey(sb, 260), renderKey(sb, 590));
     assert.notEqual(renderKey(sb, 590), renderKey(sb, 610));
+    // Silence après le dernier mot (2000 ms) : l'accroche disparaît à hookEndMs + 600 = 2600 ms.
+    assert.notEqual(renderKey(sb, 2500), renderKey(sb, 2700));
   });
 });
 

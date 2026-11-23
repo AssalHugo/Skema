@@ -20,7 +20,7 @@ const serwist = new Serwist({
   clientsClaim: true,
   navigationPreload: true,
   runtimeCaching: [
-    // Schémas WebP des capsules (R2, immuables par clé) : cache d'abord.
+    // Schémas WebP des capsules (R2, immuables par clé ; CORS 200 via crossOrigin="anonymous").
     {
       matcher: ({ request, sameOrigin }) => !sameOrigin && request.destination === "image",
       handler: new CacheFirst({

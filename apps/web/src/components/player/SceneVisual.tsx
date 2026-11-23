@@ -25,16 +25,18 @@ export function SceneVisual({
   const progress = sceneProgress(scene, timeMs);
 
   if (scene.visualType === "diagram" && scene.diagramUrl) {
+    const ratio = diagramPanelRatio(scene.diagramWidth, scene.diagramHeight);
     return (
-      <div className="relative flex h-full w-full items-center justify-center">
+      <div className="relative flex h-full w-full items-center justify-center [container-type:size]">
         <div
-          className="relative max-h-full w-full overflow-hidden rounded-3xl bg-white shadow-[0_20px_60px_-20px_rgba(52,211,153,.35)] ring-1 ring-white/10"
-          style={{ aspectRatio: String(diagramPanelRatio(scene.diagramWidth, scene.diagramHeight)) }}
+          className="relative overflow-hidden rounded-3xl bg-white shadow-[0_20px_60px_-20px_rgba(52,211,153,.35)] ring-1 ring-white/10"
+          style={{ aspectRatio: String(ratio), width: `min(100cqw, calc(100cqh * ${ratio}))` }}
         >
           {/* eslint-disable-next-line @next/next/no-img-element -- WebP déjà optimisé sur R2 */}
           <img
             ref={cameraRef}
             src={scene.diagramUrl}
+            crossOrigin="anonymous"
             alt={scene.calloutLabel ?? "Schéma du cours"}
             draggable={false}
             decoding="async"
@@ -86,7 +88,7 @@ export function SceneVisual({
                 const visible = (col === 0 ? k * 2 : k * 2 + 1) < Math.max(1, shown);
                 return (
                   <motion.li
-                    key={it}
+                    key={`${col}-${k}`}
                     initial={false}
                     animate={{ opacity: visible ? 1 : 0, x: visible ? 0 : col === 0 ? -12 : 12 }}
                     transition={{ duration: 0.3 }}
