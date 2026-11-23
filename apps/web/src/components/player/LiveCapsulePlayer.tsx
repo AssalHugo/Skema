@@ -1,9 +1,19 @@
 "use client";
 import { AnimatePresence, motion } from "framer-motion";
 import Link from "next/link";
-import { type RefObject, useEffect, useRef, useState } from "react";
+import { type RefObject, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import type { FeedItem, ProgressUpdate } from "@/lib/feed/types";
-import { indexAt, watchedPct } from "@/lib/player/timeline";
+import {
+  cameraFrameAt,
+  cameraPlans,
+  cameraTransform,
+  diagramOversample,
+  indexAt,
+  renderKey,
+  sceneProgress,
+  SmoothClock,
+  watchedPct,
+} from "@/lib/player/timeline";
 import { DynamicCaptions } from "./DynamicCaptions";
 import { QuizOverlay } from "./QuizOverlay";
 import { SceneVisual } from "./SceneVisual";
@@ -47,6 +57,61 @@ export function LiveCapsulePlayer({
   const [ended, setEnded] = useState(false);
   const [blocked, setBlocked] = useState(false);
   const maxTimeRef = useRef(0);
+  /** Temps lissé de l'image courante (peinture directe, sans re-rendu). */
+  const timeRef = useRef(0);
+  const renderKeyRef = useRef("");
+  const [clock] = useState(() => new SmoothClock());
+  const cameraElRef = useRef<HTMLImageElement | null>(null);
+  const barRefs = useRef<(HTMLDivElement | null)[]>([]);
+
+  const plans = useMemo(() => cameraPlans(sb.scenes), [sb.scenes]);
+
+  /** Peint la caméra du schéma et la barre de progression pour l'instant t. */
+  const paint = useCallback(
+    (t: number) => {
+      const si = Math.max(0, indexAt(sb.scenes, t));
+      const scene = sb.scenes[si];
+      const plan = plans[si];
+      const img = cameraElRef.current;
+      if (img && plan && scene.diagramUrl) {
+        const oversample = diagramOversample(sb.scenes, scene.diagramUrl);
+        img.style.transform = cameraTransform(cameraFrameAt(scene, plan, t), oversample);
+      }
+      barRefs.current.forEach((bar, i) => {
+        if (!bar) return;
+        const fill = i < si ? 1 : i > si ? 0 : sceneProgress(sb.scenes[i], t);
+        bar.style.transform = `scaleX(${fill})`;
+      });
+    },
+    [plans, sb.scenes],
+  );
+
+  /** Fixe le temps affiché hors lecture (pause, fin, relance). */
+  const showTime = useCallback(
+    (t: number) => {
+      timeRef.current = t;
+      renderKeyRef.current = renderKey(sb, t);
+      setTimeMs(t);
+    },
+    [sb],
+  );
+
+  const cameraRef = useCallback(
+    (el: HTMLImageElement | null) => {
+      if (!el) return;
+      cameraElRef.current = el;
+      paint(timeRef.current);
+      return () => {
+        if (cameraElRef.current === el) cameraElRef.current = null;
+      };
+    },
+    [paint],
+  );
+
+  // Après chaque rendu (changement de scène, pause, carte inactive) : repeindre l'instant courant.
+  useLayoutEffect(() => {
+    paint(timeRef.current);
+  });
 
   // Activation : la carte prend l'audio partagé, le quitte en partant.
   useEffect(() => {
@@ -65,12 +130,13 @@ export function LiveCapsulePlayer({
     };
     const onPause = () => {
       setPlaying(false);
-      setTimeMs(audio.currentTime * 1000);
+      clock.reset(audio.currentTime * 1000);
+      showTime(audio.currentTime * 1000);
     };
     const onEnded = () => {
       setPlaying(false);
       setEnded(true);
-      setTimeMs(sb.totalDurationMs);
+      showTime(sb.totalDurationMs);
       maxTimeRef.current = sb.totalDurationMs;
       reportProgress({ episodeId: item.episodeId, watchedPct: 100 });
     };
@@ -93,27 +159,35 @@ export function LiveCapsulePlayer({
     };
     // `rate` est appliqué par l'effet suivant : il ne doit pas relancer la capsule.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [active, started, audioRef, sb, item.episodeId, item.title, item.courseTitle, reportProgress]);
+  }, [active, started, audioRef, sb, item.episodeId, item.title, item.courseTitle, reportProgress, clock, showTime]);
 
   useEffect(() => {
     const audio = audioRef.current;
     if (active && audio) audio.playbackRate = rate;
   }, [active, audioRef, rate]);
 
-  // Horloge : rAF sur currentTime pendant la lecture.
+  // Horloge : rAF sur currentTime lissé. Caméra et progression sont peintes à
+  // chaque image ; React ne re-rend que quand le texte affiché change.
   useEffect(() => {
     const audio = audioRef.current;
     if (!active || !playing || !audio) return;
+    clock.reset(audio.currentTime * 1000);
     let frame = 0;
-    const loop = () => {
-      const t = audio.currentTime * 1000;
+    const loop = (now: number) => {
+      const t = Math.min(sb.totalDurationMs, clock.sample(audio.currentTime * 1000, now, audio.playbackRate));
+      timeRef.current = t;
       maxTimeRef.current = Math.max(maxTimeRef.current, t);
-      setTimeMs(t);
+      paint(t);
+      const key = renderKey(sb, t);
+      if (key !== renderKeyRef.current) {
+        renderKeyRef.current = key;
+        setTimeMs(t);
+      }
       frame = requestAnimationFrame(loop);
     };
     frame = requestAnimationFrame(loop);
     return () => cancelAnimationFrame(frame);
-  }, [active, playing, audioRef]);
+  }, [active, playing, audioRef, clock, paint, sb]);
 
   function togglePlay() {
     const audio = audioRef.current;
@@ -127,7 +201,8 @@ export function LiveCapsulePlayer({
     if (!audio) return;
     setEnded(false);
     audio.currentTime = 0;
-    setTimeMs(0);
+    clock.reset(0);
+    showTime(0);
     audio.play().catch(() => setBlocked(true));
   }
 
@@ -189,14 +264,20 @@ export function LiveCapsulePlayer({
       <div className="relative min-h-0 flex-1 px-4 py-3">
         <AnimatePresence mode="popLayout" initial={false}>
           <motion.div
-            key={scene.id}
+            // Scènes consécutives sur le même schéma : même élément, la caméra glisse sans fondu.
+            key={scene.visualType === "diagram" && scene.diagramUrl ? `diagram:${scene.diagramUrl}` : scene.id}
             initial={{ opacity: 0, scale: 0.96 }}
             animate={{ opacity: 1, scale: 1 }}
             exit={{ opacity: 0, scale: 1.03 }}
             transition={{ duration: 0.35, ease: "easeOut" }}
             className="absolute inset-x-4 inset-y-3"
           >
-            <SceneVisual scene={scene} timeMs={timeMs} />
+            <SceneVisual
+              scene={scene}
+              timeMs={timeMs}
+              cameraRef={cameraRef}
+              oversample={scene.diagramUrl ? diagramOversample(sb.scenes, scene.diagramUrl) : 1}
+            />
           </motion.div>
         </AnimatePresence>
       </div>
@@ -205,15 +286,18 @@ export function LiveCapsulePlayer({
       <div className="relative z-10 flex flex-col gap-4 pb-[calc(1rem+env(safe-area-inset-bottom))]">
         <DynamicCaptions storyboard={sb} timeMs={timeMs} />
         <div className="flex gap-1 px-4" aria-hidden>
-          {sb.scenes.map((s, i) => {
-            const fill =
-              i < sceneIndex ? 1 : i > sceneIndex ? 0 : Math.min(1, Math.max(0, (timeMs - s.startMs) / Math.max(1, s.endMs - s.startMs)));
-            return (
-              <div key={s.id} className="h-1 overflow-hidden rounded-full bg-white/15" style={{ flexGrow: Math.max(1, s.endMs - s.startMs) }}>
-                <div className="h-full rounded-full bg-white" style={{ width: `${fill * 100}%` }} />
-              </div>
-            );
-          })}
+          {sb.scenes.map((s, i) => (
+            <div key={s.id} className="h-1 overflow-hidden rounded-full bg-white/15" style={{ flexGrow: Math.max(1, s.endMs - s.startMs) }}>
+              {/* Remplissage peint à chaque image par `paint()` */}
+              <div
+                ref={(el) => {
+                  barRefs.current[i] = el;
+                }}
+                className="h-full origin-left rounded-full bg-white will-change-transform"
+                style={{ transform: "scaleX(0)" }}
+              />
+            </div>
+          ))}
         </div>
       </div>
 

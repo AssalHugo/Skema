@@ -2,7 +2,23 @@ import assert from "node:assert/strict";
 import { describe, it } from "node:test";
 import { demoFeed, simulateTimings } from "@/app/demo/demo-data";
 import type { DisplaySegment, WordTimestamp } from "@/lib/storyboard/types";
-import { cameraAt, captionAt, easeInOut, indexAt, mountedWindow, nextRate, sceneProgress, watchedPct } from "./timeline";
+import type { StoryboardScene } from "@/lib/storyboard/types";
+import {
+  cameraAt,
+  cameraFrameAt,
+  cameraPlans,
+  captionAt,
+  diagramContentBox,
+  diagramOversample,
+  easeInOut,
+  indexAt,
+  mountedWindow,
+  nextRate,
+  renderKey,
+  sceneProgress,
+  SmoothClock,
+  watchedPct,
+} from "./timeline";
 
 const words: WordTimestamp[] = [
   { word: "Le", startMs: 0, endMs: 200 },
@@ -111,5 +127,131 @@ describe("démo /demo", () => {
     const t = simulateTimings({ title: "", hookTitle: "", scenes: [scene], quiz: { question: "", choices: [], correctIndex: 0, explanation: "" } }, 5000);
     assert.equal(t.length, 3);
     for (let i = 1; i < sb.wordTimings.length; i++) assert.ok(sb.wordTimings[i].startMs >= sb.wordTimings[i - 1].endMs);
+  });
+});
+
+const diagramScene = (id: string, startMs: number, endMs: number, url: string, focusX: number, toScale: number): StoryboardScene => ({
+  id,
+  startMs,
+  endMs,
+  startWord: 0,
+  endWord: 0,
+  visualType: "diagram",
+  diagramUrl: url,
+  cameraMotion: { fromScale: 1, toScale, focusX, focusY: 50 },
+});
+
+describe("caméra continue", () => {
+  const scenes: StoryboardScene[] = [
+    diagramScene("s1", 0, 5000, "/a.webp", 20, 2),
+    diagramScene("s2", 5000, 9000, "/a.webp", 80, 1.8),
+    { id: "s3", startMs: 9000, endMs: 12000, startWord: 0, endWord: 0, visualType: "kinetic_text", highlightText: "x" },
+    diagramScene("s4", 12000, 15000, "/a.webp", 50, 1.5),
+  ];
+  const plans = cameraPlans(scenes);
+
+  it("pas de saut au changement de scène sur le même schéma", () => {
+    const end1 = cameraFrameAt(scenes[0], plans[0]!, 5000);
+    const start2 = cameraFrameAt(scenes[1], plans[1]!, 5000);
+    assert.deepEqual(start2, end1);
+    assert.ok(end1.scale > 1.9, "la scène 1 finit zoomée");
+  });
+
+  it("repart du plan d'origine après une scène sans schéma", () => {
+    assert.equal(plans[2], null);
+    assert.deepEqual(plans[3]!.from, cameraAt(scenes[3].cameraMotion, 0));
+  });
+
+  it("mouvement continu : pas d'écart brutal entre deux images (60 i/s)", () => {
+    let prev = cameraFrameAt(scenes[0], plans[0]!, 0);
+    for (let t = 16; t <= 9000; t += 16) {
+      const si = indexAt(scenes, t);
+      const f = cameraFrameAt(scenes[si], plans[si]!, t);
+      assert.ok(Math.abs(f.scale - prev.scale) < 0.03, `zoom ${prev.scale} → ${f.scale} à ${t} ms`);
+      assert.ok(Math.abs(f.translateX - prev.translateX) < 2, `translation à ${t} ms`);
+      prev = f;
+    }
+  });
+
+  it("travelling puis dérive lente", () => {
+    const atMove = cameraFrameAt(scenes[0], plans[0]!, plans[0]!.moveMs);
+    assert.equal(atMove.scale, 2);
+    assert.ok(cameraFrameAt(scenes[0], plans[0]!, 5000).scale > atMove.scale);
+  });
+
+  it("sur-échantillonnage borné à 2", () => {
+    assert.equal(diagramOversample(scenes, "/a.webp"), 2);
+    assert.equal(diagramOversample(scenes, "/b.webp"), 1.05);
+  });
+});
+
+describe("horloge lissée", () => {
+  it("lisse un currentTime qui n'avance que tous les 250 ms (Safari iOS)", () => {
+    const clock = new SmoothClock();
+    clock.reset(0);
+    let prev = clock.sample(0, 0, 1);
+    const deltas: number[] = [];
+    for (let now = 16; now <= 5000; now += 16) {
+      const raw = Math.floor(now / 250) * 250; // paliers
+      const t = clock.sample(raw, now, 1);
+      deltas.push(t - prev);
+      assert.ok(Math.abs(t - now) < 120, `dérive ${t - now} ms à ${now} ms`);
+      prev = t;
+    }
+    const steady = deltas.slice(30);
+    assert.ok(Math.min(...steady) > 8 && Math.max(...steady) < 26, `pas irréguliers : ${Math.min(...steady)}…${Math.max(...steady)}`);
+  });
+
+  it("monotone, recalée sur un seek, figée sur un audio bloqué", () => {
+    const clock = new SmoothClock();
+    clock.reset(0);
+    clock.sample(0, 0, 1);
+    assert.equal(clock.sample(20_000, 16, 1), 20_000);
+    clock.reset(1000);
+    assert.equal(clock.sample(1000, 100, 1), 1000);
+    assert.ok(clock.sample(1000, 2000, 1) <= 1300, "pas d'extrapolation sans nouveau palier");
+  });
+
+  it("tient compte de la vitesse de lecture", () => {
+    const clock = new SmoothClock();
+    clock.reset(0);
+    clock.sample(0, 0, 1.5);
+    const t = clock.sample(0, 100, 1.5);
+    assert.ok(Math.abs(t - 150) < 1);
+  });
+});
+
+describe("renderKey", () => {
+  it("ne change qu'aux frontières de mots", () => {
+    const sb = { scenes: [diagramScene("s1", 0, 2000, "/a", 50, 1)], wordTimings: words };
+    assert.equal(renderKey(sb, 260), renderKey(sb, 590));
+    assert.notEqual(renderKey(sb, 590), renderKey(sb, 610));
+  });
+});
+
+describe("cadrage sur un schéma paysage dans un panneau carré", () => {
+  const box = diagramContentBox(1200, 800); // contenu : toute la largeur, 2/3 de la hauteur
+
+  it("boîte de contenu", () => {
+    assert.deepEqual(box, { cw: 1, ch: 800 / 1200 });
+    assert.deepEqual(diagramContentBox(800, 1200), { cw: (800 / 1200) / 0.75, ch: 1 });
+  });
+
+  it("ne descend jamais dans la bande blanche sous le schéma", () => {
+    // Zone visée tout en bas du schéma (focusY 84) : le bas du contenu zoomé doit rester sous le bas du panneau.
+    const f = cameraAt({ fromScale: 1, toScale: 2.3, focusX: 66, focusY: 84 }, 1, box);
+    const contentBottom = 50 + (box.ch * f.scale * 100) / 2 + f.translateY; // % du panneau
+    assert.ok(contentBottom >= 100 - 1e-9, `bas du schéma à ${contentBottom} %`);
+  });
+
+  it("vise le bon point : focusY en % du schéma, pas du panneau", () => {
+    const f = cameraAt({ fromScale: 2, toScale: 2, focusX: 50, focusY: 60 }, 1, box);
+    // Point à +10 % du schéma = +6,67 % du panneau, ×2 après zoom → recentré de -13,33 %.
+    assert.ok(Math.abs(f.translateY - -13.333) < 0.01, String(f.translateY));
+  });
+
+  it("schéma qui ne remplit pas l'axe : reste centré", () => {
+    const f = cameraAt({ fromScale: 1.2, toScale: 1.2, focusX: 50, focusY: 10 }, 1, box);
+    assert.equal(f.translateY, 0);
   });
 });

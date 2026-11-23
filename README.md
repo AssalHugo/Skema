@@ -73,7 +73,8 @@ cd services/gcp-worker && python -m venv .venv && .venv/bin/pip install -r requi
 
 - **Démo sans compte ni base** : `/demo` (faux schéma, 3 capsules passées dans le vrai `buildStoryboard()`, voix-off muette à horodatage simulé). Sert aussi au test iPhone de S.4.
 - **PWA** : `app/manifest.ts` (`standalone`, `portrait`, icônes `public/icons/`), Serwist en mode *configurator* (compatible Turbopack) : `pnpm build` = `next build && serwist build` → `public/sw.js` (non versionné). Service worker désactivé en `next dev`.
-- **Calculs purs** : `src/lib/player/timeline.ts` (caméra, karaoké, virtualisation), testés dans `player.test.ts`.
+- **Caméra fluide** : un seul travelling continu entre scènes consécutives sur le même schéma (sans fondu ni retour au plan large), durée proportionnelle à la distance, puis dérive lente ; cadrage borné au contenu réel du schéma (jamais les bandes blanches). L'image est chargée ×2 puis réduite (nette au zoom, sans re-rastérisation), et la caméra comme la barre de progression sont peintes à chaque image hors React ; React ne re-rend qu'au changement de mot. `SmoothClock` lisse `currentTime`, qui n'avance que par paliers sur Safari iOS et Firefox.
+- **Calculs purs** : `src/lib/player/timeline.ts` (caméra, horloge lissée, karaoké, virtualisation), testés dans `player.test.ts`.
 - Pas de migration : `user_progress` existe depuis la phase 0 ; `next_review_at` (SM-2) reste pour la phase 5.
 
 ### Phase 3 — critères de fin
