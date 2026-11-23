@@ -76,6 +76,20 @@ def test_single_huge_word_is_permanent_error():
     assert err.value.permanent
 
 
+def test_chunks_recheck_limit_after_early_sentence_cut():
+    # Fin de phrase à ~1/3 du buffer suivie d'une longue queue et d'un mot volumineux :
+    # une seule coupe ne suffit pas, build_chunks doit continuer à vider le buffer.
+    us = [
+        tts.Unit("a.", "a" * 30 + "."),
+        tts.Unit("b", "b" * 30),
+        tts.Unit("c", "c" * 30),
+        tts.Unit("d", "d" * 80),
+    ]
+    chunks = tts.build_chunks(us, 0, safe_bytes=120)
+    assert all(c.bytes <= 120 for c in chunks)
+    assert [i for c in chunks for i in c.indexes] == [0, 1, 2, 3]
+
+
 def test_fragment_whitelist():
     tts.validate_units([tts.Unit("l'ATP", '<sub alias="l\'a té pé">l\'ATP</sub>'), tts.Unit("3'.", '<sub alias="trois prime">3\'</sub>.')])
     for bad in ('<break time="1s"/>', '<audio src="x"/>', "<sub>x</sub>", "a < b"):
@@ -90,6 +104,15 @@ def test_word_timings_interpolate_between_sparse_marks():
     assert 0 < out[1]["start_ms"] < 1000 and 1000 < out[3]["start_ms"] < 2000
     assert out[-1]["end_ms"] == 2000
     assert [w["exact"] for w in out] == [True, False, True, False]
+
+
+def test_word_timings_stay_sorted_when_marks_regress():
+    marks = {0: 0.0, 1: 0.6, 2: 0.4}
+    out = tts.word_timings(["a", "b", "c"], marks, 1.0)
+    starts = [w["start_ms"] for w in out]
+    assert starts == sorted(starts)
+    v = tts.verdict(out, marks, 3)
+    assert not v["ok"] and not v["monotonic"] and "timestamps non monotones" in v["fails"]
 
 
 def test_verdict_flags_missing_marks():
@@ -123,6 +146,13 @@ def test_tts_endpoint_offsets_marks_across_requests(client, fake_google):
     assert body["mime_type"] == "audio/mpeg" and len(mp3) == body["bytes"] > 1000
     assert mp3[:3] == b"ID3" or mp3[0] == 0xFF
     assert body["billable_chars"] > body["billable_chars_without_marks"]
+
+
+def test_tts_derives_language_code_from_voice(client, fake_google, monkeypatch):
+    monkeypatch.setattr(tts, "encode_mp3", lambda pcm, sr, kbps: b"ID3fake")
+    res = client.post("/tts", json={"units": units(3), "voice": "en-US-Neural2-F"})
+    assert res.status_code == 200, res.text
+    assert fake_google[0]["voice"]["languageCode"] == "en-US"
 
 
 def test_tts_rejects_injected_ssml(client, fake_google):

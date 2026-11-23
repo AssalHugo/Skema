@@ -34,7 +34,7 @@ export async function POST(_request: Request, ctx: RouteContext<"/api/episodes/[
       return Response.json({ episodeId: id, status: "pending", runId: handle.id }, { status: 202 });
     } catch (err) {
       console.error("[regenerate] déclenchement Trigger.dev impossible", err);
-      await getDb().update(episodes).set({ status: episode.status }).where(eq(episodes.id, id));
+      await getDb().update(episodes).set({ status: episode.status, error: episode.error }).where(eq(episodes.id, id));
       throw new HttpError(502, "Régénération non lancée (Trigger.dev indisponible)");
     }
   });

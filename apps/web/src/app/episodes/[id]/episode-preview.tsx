@@ -26,10 +26,12 @@ export function EpisodePreview({ episode }: { episode: EpisodeForUser }) {
   const audioRef = useRef<HTMLAudioElement>(null);
   const [timeMs, setTimeMs] = useState(0);
   const [rate, setRate] = useState(1);
+  const [playing, setPlaying] = useState(false);
   const [ended, setEnded] = useState(false);
   const [message, setMessage] = useState<string | null>(null);
 
   useEffect(() => {
+    if (!playing) return;
     let frame = 0;
     const loop = () => {
       const audio = audioRef.current;
@@ -38,7 +40,7 @@ export function EpisodePreview({ episode }: { episode: EpisodeForUser }) {
     };
     frame = requestAnimationFrame(loop);
     return () => cancelAnimationFrame(frame);
-  }, []);
+  }, [playing]);
 
   function changeRate(r: number) {
     setRate(r);
@@ -66,6 +68,18 @@ export function EpisodePreview({ episode }: { episode: EpisodeForUser }) {
         <p className="text-muted">
           {episode.status === "failed" ? <span className="text-red-400">Échec : {episode.error}</span> : "Capsule en cours de génération…"}
         </p>
+        {episode.status === "failed" && (
+          <>
+            <button
+              type="button"
+              onClick={regenerate}
+              className="self-start rounded-lg border border-white/20 px-3 py-2 text-sm font-semibold"
+            >
+              Régénérer la capsule
+            </button>
+            {message && <p className="text-sm text-muted">{message}</p>}
+          </>
+        )}
       </>
     );
   }
@@ -111,8 +125,20 @@ export function EpisodePreview({ episode }: { episode: EpisodeForUser }) {
         controls
         preload="auto"
         className="w-full"
-        onPlay={() => setEnded(false)}
-        onEnded={() => setEnded(true)}
+        onPlay={() => {
+          setEnded(false);
+          setPlaying(true);
+        }}
+        onPause={(e) => {
+          setPlaying(false);
+          setTimeMs(e.currentTarget.currentTime * 1000);
+        }}
+        onEnded={(e) => {
+          setPlaying(false);
+          setEnded(true);
+          setTimeMs(e.currentTarget.currentTime * 1000);
+        }}
+        onSeeked={(e) => setTimeMs(e.currentTarget.currentTime * 1000)}
         onLoadedMetadata={(e) => (e.currentTarget.playbackRate = rate)}
       />
       <div className="flex items-center gap-2 text-sm">

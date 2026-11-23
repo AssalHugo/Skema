@@ -69,6 +69,12 @@ describe("toSsmlUnits — robustesse", () => {
     assert.deepEqual(unit("(d’[ARN|a èr ène])"), { word: "(d’ARN)", ssml: `(<sub alias="d’a èr ène">d’ARN</sub>)` });
   });
 
+  it("évite la double élision si le modèle la répète dans « prononcé »", () => {
+    assert.deepEqual(unit("l'[ATP|l'a té pé]"), { word: "l'ATP", ssml: `<sub alias="l'a té pé">l'ATP</sub>` });
+    assert.deepEqual(unit("L'[ATP|l’a té pé]"), { word: "L'ATP", ssml: `<sub alias="L'a té pé">L'ATP</sub>` });
+    assert.equal(spokenText("L'[ATP|l'a té pé]"), "L'a té pé");
+  });
+
   it("tolère une annotation mal formée", () => {
     assert.deepEqual(toSsmlUnits("[ATP] et [|x] [ADN|]"), [
       { word: "ATP", ssml: "ATP" },

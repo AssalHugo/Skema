@@ -148,15 +148,16 @@ export function buildStoryboard(input: BuildStoryboardInput): GeneratedStoryboar
     const startMs = i === 0 ? 0 : wordTimings[r.start].startMs;
     const endMs = next ? wordTimings[next.start].startMs : input.durationMs;
     const diagram = s.diagramRef ? input.diagrams.get(s.diagramRef.trim().toUpperCase()) : undefined;
+    const rawComparison = s.comparison
+      ? {
+          leftTitle: label(s.comparison.leftTitle, 40) ?? "",
+          leftItems: s.comparison.leftItems.map((x) => label(x, 60) ?? "").filter(Boolean),
+          rightTitle: label(s.comparison.rightTitle, 40) ?? "",
+          rightItems: s.comparison.rightItems.map((x) => label(x, 60) ?? "").filter(Boolean),
+        }
+      : undefined;
     const comparison =
-      s.comparison && s.comparison.leftItems.length && s.comparison.rightItems.length
-        ? {
-            leftTitle: label(s.comparison.leftTitle, 40) ?? "",
-            leftItems: s.comparison.leftItems.map((x) => label(x, 60) ?? "").filter(Boolean),
-            rightTitle: label(s.comparison.rightTitle, 40) ?? "",
-            rightItems: s.comparison.rightItems.map((x) => label(x, 60) ?? "").filter(Boolean),
-          }
-        : undefined;
+      rawComparison && rawComparison.leftItems.length && rawComparison.rightItems.length ? rawComparison : undefined;
 
     // Visuel demandé mais inutilisable (schéma inconnu, comparaison vide) → texte animé.
     let visualType: VisualType = s.visualType;

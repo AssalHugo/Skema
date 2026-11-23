@@ -100,7 +100,7 @@ def build_chunks(units: list[Unit], mark_every: int, safe_bytes: int = SAFE_REQU
         size = len(piece.encode("utf-8"))
         if size + overhead > safe_bytes:
             raise TtsError(f"le mot {i} dépasse à lui seul {safe_bytes} octets", permanent=True)
-        if cur and cur_bytes + size > safe_bytes:
+        while cur and cur_bytes + size > safe_bytes:
             cut = _cut_index(cur, units)
             chunks.append(cur[: cut + 1])
             cur = cur[cut + 1 :]
@@ -200,10 +200,16 @@ def word_timings(words: list[str], marks: dict[int, float], total_s: float) -> l
     n = len(words)
     if n == 0:
         return []
-    anchors = sorted((i, t) for i, t in marks.items() if 0 <= i < n)
-    if not anchors or anchors[0][0] != 0:
-        anchors.insert(0, (0, 0.0))
-    anchors.append((n, total_s))
+    raw_anchors = sorted((i, t) for i, t in marks.items() if 0 <= i < n)
+    if not raw_anchors or raw_anchors[0][0] != 0:
+        raw_anchors.insert(0, (0, 0.0))
+    raw_anchors.append((n, total_s))
+    anchors: list[tuple[int, float]] = []
+    prev_t = 0.0
+    for idx, t in raw_anchors:
+        clamped = max(prev_t, min(t, total_s))
+        anchors.append((idx, clamped))
+        prev_t = clamped
     starts = [0.0] * n
     for (a, ta), (b, tb) in zip(anchors, anchors[1:]):
         if b <= a:
@@ -283,13 +289,14 @@ def synthesize(
     units: list[Unit],
     *,
     voice: str,
-    language_code: str = "fr-FR",
+    language_code: str | None = None,
     speaking_rate: float = 1.0,
     mark_every: int = 1,
     sample_rate: int = SAMPLE_RATE,
     mp3_kbps: int = 64,
 ) -> dict:
     validate_units(units)
+    resolved_lang = language_code or "-".join(voice.split("-")[:2])
     chunks = build_chunks(units, mark_every)
     pcm_parts: list[bytes] = []
     marks: dict[int, float] = {}
@@ -299,7 +306,7 @@ def synthesize(
             raise TtsError(f"requête de {chunk.bytes} octets > {MAX_REQUEST_BYTES}", permanent=True)
         body = {
             "input": {"ssml": chunk.ssml},
-            "voice": {"languageCode": language_code, "name": voice},
+            "voice": {"languageCode": resolved_lang, "name": voice},
             "audioConfig": {
                 "audioEncoding": "LINEAR16",
                 "sampleRateHertz": sample_rate,

@@ -22,7 +22,7 @@ import { deleteObjects, getObjectBytes, getPresignedDownloadUrl, getPublicAssetU
 import { synthesizeWithFallback } from "@/lib/tts/adapter";
 import { findUnannotatedTerms } from "@/lib/tts/ssml";
 import { pageText } from "@/lib/worker/client";
-import { errorMessage } from "./errors";
+import { abortIfPermanent, errorMessage } from "./errors";
 
 const { episodes, concepts, chapters, courses, courseDiagrams } = schema;
 
@@ -130,7 +130,9 @@ export const generateEpisode = schemaTask({
 
     // 3. Voix-off et horodatage.
     await db.update(episodes).set({ status: "tts", title: script.data.title.slice(0, 160) }).where(eq(episodes.id, episode.id));
-    const tts = await synthesizeWithFallback({ annotatedText: fullScript }, { task: "episode.tts", ...ctx });
+    const tts = await abortIfPermanent(() =>
+      synthesizeWithFallback({ annotatedText: fullScript }, { task: "episode.tts", ...ctx }),
+    );
     if (tts.verdict && !tts.verdict.ok) logger.warn("Seuils de S.3 non respectés", { verdict: tts.verdict, attempts: tts.attempts });
 
     // 4. MP3 sur R2 (nouvelle clé à chaque génération : cache immuable), storyboard.

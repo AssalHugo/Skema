@@ -301,7 +301,7 @@ class TtsRequest(BaseModel):
         default_factory=lambda: os.environ.get("TTS_VOICE", "fr-FR-Neural2-F"),
         pattern=r"^[a-z]{2,3}-[A-Z]{2}-[\w-]+$",
     )
-    language_code: str = Field("fr-FR", pattern=r"^[a-z]{2,3}-[A-Z]{2}$")
+    language_code: str | None = Field(None, pattern=r"^[a-z]{2,3}-[A-Z]{2}$")
     speaking_rate: float = Field(1.0, ge=0.5, le=2.0)
     mark_every: int = Field(1, ge=0, le=10, description="0 : sans marks (pas d'horodatage exact)")
     sample_rate: int = Field(tts.SAMPLE_RATE, ge=16000, le=48000)

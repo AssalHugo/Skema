@@ -170,6 +170,26 @@ describe("storyboard", () => {
     );
   });
 
+  it("bascule une comparison_card vide après nettoyage en kinetic_text", () => {
+    const script = sampleScript();
+    script.scenes[2] = {
+      ...script.scenes[2],
+      comparison: { leftTitle: "A", leftItems: ["   ", "[]"], rightTitle: "B", rightItems: ["ok"] },
+    };
+    const wt = timings(script);
+    const sb = buildStoryboard({
+      script,
+      diagrams,
+      wordTimings: wt,
+      durationMs: wt.length * 400,
+      audioUrl: "u",
+      audioMimeType: "audio/mpeg",
+      seed: "x",
+    });
+    assert.equal(sb.scenes[2].visualType, "kinetic_text");
+    assert.equal(sb.scenes[2].comparison, undefined);
+  });
+
   it("caméra par défaut", () => {
     assert.deepEqual(normalizeCamera(null), { fromScale: 1, toScale: 1.25, focusX: 50, focusY: 50 });
   });

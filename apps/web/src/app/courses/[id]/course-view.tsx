@@ -126,14 +126,16 @@ export function CourseView({ initial }: { initial: CourseOverview }) {
                 </li>
                 {c.episodes.map((e) => (
                   <li key={e.id} className="flex justify-between gap-3">
-                    {e.status === "ready" ? (
-                      <Link href={`/episodes/${e.id}`} className="truncate underline underline-offset-2">
+                    {e.status === "ready" || e.status === "failed" ? (
+                      <Link
+                        href={`/episodes/${e.id}`}
+                        className="truncate underline underline-offset-2"
+                        title={e.error ?? undefined}
+                      >
                         {e.title}
                       </Link>
                     ) : (
-                      <span className="truncate" title={e.error ?? undefined}>
-                        {e.title}
-                      </span>
+                      <span className="truncate">{e.title}</span>
                     )}
                     <span className={`shrink-0 ${e.status === "failed" ? "text-red-400" : "text-muted"}`}>
                       {e.status === "ready" && e.durationSec ? `${Math.round(e.durationSec)} s` : EPISODE_LABEL[e.status]}

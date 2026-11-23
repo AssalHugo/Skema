@@ -37,6 +37,14 @@ function squash(text: string): string {
   return text.replace(/\s+/g, " ").trim();
 }
 
+/** Évite « l'l'a té pé » si le modèle a répété l'élision dans « prononcé ». */
+function joinElision(prefix: string, spoken: string): string {
+  if (!prefix) return spoken;
+  const norm = (s: string) => s.replace(/’/g, "'").toLowerCase();
+  if (norm(spoken).startsWith(norm(prefix))) return prefix + spoken.slice(prefix.length).trimStart();
+  return prefix + spoken;
+}
+
 /** Découpe le texte annoté en mots affichés + fragments SSML. */
 export function toSsmlUnits(annotated: string): SsmlUnit[] {
   const units: SsmlUnit[] = [];
@@ -51,7 +59,7 @@ export function toSsmlUnits(annotated: string): SsmlUnit[] {
       const spoken = squash(clean(m[3])) || display;
       word += before + prefix + display;
       ssml += escapeXml(before);
-      if (display) ssml += `<sub alias="${escapeAttr(prefix + spoken)}">${escapeXml(prefix + display)}</sub>`;
+      if (display) ssml += `<sub alias="${escapeAttr(joinElision(prefix, spoken))}">${escapeXml(prefix + display)}</sub>`;
       else ssml += escapeXml(prefix);
       last = m.index + m[0].length;
     }
@@ -83,7 +91,7 @@ export function displayText(annotated: string): string {
 export function spokenText(annotated: string): string {
   return squash(
     annotated.normalize("NFC").replace(GROUP_RE, (_all, prefix: string | undefined, d: string, s: string) => {
-      return (prefix ?? "") + (squash(clean(s)) || squash(clean(d)));
+      return joinElision(prefix ?? "", squash(clean(s)) || squash(clean(d)));
     }),
   );
 }
