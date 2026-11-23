@@ -82,6 +82,11 @@ export function CourseView({ initial }: { initial: CourseOverview }) {
           ← Accueil
         </Link>
         <h1 className="text-3xl font-bold">{course.title}</h1>
+        {chapters.some((c) => c.episodes.some((e) => e.status === "ready")) && (
+          <Link href={`/feed?course=${course.id}`} className="self-start text-sm font-semibold text-accent">
+            ▶ Réviser tout le cours
+          </Link>
+        )}
         <p className="text-sm text-muted">
           {course.status === "processing" && "Analyse du document (chapitres, lots de pages)…"}
           {course.status === "failed" && <span className="text-red-400">Échec de l&apos;analyse : {course.error}</span>}
@@ -118,6 +123,14 @@ export function CourseView({ initial }: { initial: CourseOverview }) {
                   </span>
                 )}
               </p>
+            )}
+            {c.episodes.some((e) => e.status === "ready") && (
+              <Link
+                href={`/feed?course=${course.id}&chapter=${c.id}`}
+                className="self-start rounded-lg bg-accent px-3 py-2 text-sm font-semibold text-black"
+              >
+                ▶ Réviser ce chapitre
+              </Link>
             )}
             {c.status === "ready" && c.episodes.length > 0 && (
               <ul className="flex flex-col gap-1 text-sm">
