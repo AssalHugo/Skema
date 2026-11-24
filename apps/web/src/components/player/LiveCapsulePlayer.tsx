@@ -7,6 +7,9 @@ import {
   cameraFrameAt,
   cameraPlans,
   cameraTransform,
+  cameraViewBox,
+  diagramKey,
+  findGeneratedDiagram,
   hookVisible,
   indexAt,
   renderKey,
@@ -62,7 +65,7 @@ export function LiveCapsulePlayer({
   const timeRef = useRef(0);
   const renderKeyRef = useRef("");
   const [clock] = useState(() => new SmoothClock());
-  const cameraElRef = useRef<HTMLImageElement | null>(null);
+  const cameraElRef = useRef<HTMLImageElement | SVGSVGElement | null>(null);
   const barRefs = useRef<(HTMLDivElement | null)[]>([]);
 
   const plans = useMemo(() => cameraPlans(sb.scenes), [sb.scenes]);
@@ -73,9 +76,15 @@ export function LiveCapsulePlayer({
       const si = Math.max(0, indexAt(sb.scenes, t));
       const scene = sb.scenes[si];
       const plan = plans[si];
-      const img = cameraElRef.current;
-      if (img && plan && scene?.diagramUrl) {
-        img.style.transform = cameraTransform(cameraFrameAt(scene, plan, t), plan.oversample);
+      const el = cameraElRef.current;
+      if (el && plan && scene) {
+        const frame = cameraFrameAt(scene, plan, t);
+        const generated = findGeneratedDiagram(sb.generatedDiagrams, scene.generatedDiagramId);
+        if (scene.visualType === "generated_diagram" && generated && el instanceof SVGSVGElement) {
+          el.setAttribute("viewBox", cameraViewBox(frame, generated.layout));
+        } else if (scene.visualType === "diagram" && scene.diagramUrl && el instanceof HTMLImageElement) {
+          el.style.transform = cameraTransform(frame, plan.oversample);
+        }
       }
       barRefs.current.forEach((bar, i) => {
         if (!bar) return;
@@ -83,7 +92,7 @@ export function LiveCapsulePlayer({
         bar.style.transform = `scaleX(${fill})`;
       });
     },
-    [plans, sb.scenes],
+    [plans, sb.scenes, sb.generatedDiagrams],
   );
 
   /** Fixe le temps affiché hors lecture (pause, fin, relance). */
@@ -97,7 +106,7 @@ export function LiveCapsulePlayer({
   );
 
   const cameraRef = useCallback(
-    (el: HTMLImageElement | null) => {
+    (el: HTMLImageElement | SVGSVGElement | null) => {
       if (!el) return;
       cameraElRef.current = el;
       paint(timeRef.current);
@@ -253,6 +262,8 @@ export function LiveCapsulePlayer({
 
   const sceneIndex = Math.max(0, indexAt(sb.scenes, timeMs));
   const scene = sb.scenes[sceneIndex];
+  const plan = plans[sceneIndex];
+  const generatedDiagram = findGeneratedDiagram(sb.generatedDiagrams, scene.generatedDiagramId);
   const showHook = hookVisible(sb.hookEndMs, timeMs);
   const paused = started && active && !playing && !ended && !audioError;
 
@@ -310,7 +321,7 @@ export function LiveCapsulePlayer({
         <AnimatePresence mode="popLayout" initial={false}>
           <motion.div
             // Scènes consécutives sur le même schéma : même élément, la caméra glisse sans fondu.
-            key={scene.visualType === "diagram" && scene.diagramUrl ? `diagram:${scene.diagramUrl}` : scene.id}
+            key={diagramKey(scene) ? `diagram:${diagramKey(scene)}` : scene.id}
             initial={{ opacity: 0, scale: 0.96 }}
             animate={{ opacity: 1, scale: 1 }}
             exit={{ opacity: 0, scale: 1.03 }}
@@ -321,7 +332,9 @@ export function LiveCapsulePlayer({
               scene={scene}
               timeMs={timeMs}
               cameraRef={cameraRef}
-              oversample={plans[sceneIndex]?.oversample ?? 1}
+              oversample={plan?.oversample ?? 1}
+              generatedDiagram={generatedDiagram}
+              frame={plan ? cameraFrameAt(scene, plan, timeMs) : undefined}
             />
           </motion.div>
         </AnimatePresence>

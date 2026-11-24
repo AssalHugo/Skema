@@ -1,8 +1,9 @@
 "use client";
 import Link from "next/link";
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
+import { DIAGRAM_BACKGROUND, GeneratedDiagram } from "@/components/player/GeneratedDiagram";
 import type { EpisodeForUser } from "@/lib/episodes/queries";
-import { indexAt } from "@/lib/player/timeline";
+import { cameraFrameAt, cameraPlans, findGeneratedDiagram, indexAt } from "@/lib/player/timeline";
 import type { GeneratedStoryboard, StoryboardScene } from "@/lib/storyboard/types";
 
 const RATES = [1, 1.25, 1.5];
@@ -15,6 +16,7 @@ export function EpisodePreview({ episode }: { episode: EpisodeForUser }) {
   const [playing, setPlaying] = useState(false);
   const [ended, setEnded] = useState(false);
   const [message, setMessage] = useState<string | null>(null);
+  const plans = useMemo(() => (sb ? cameraPlans(sb.scenes) : []), [sb]);
 
   useEffect(() => {
     if (!playing) return;
@@ -82,7 +84,18 @@ export function EpisodePreview({ episode }: { episode: EpisodeForUser }) {
       <h1 className="text-2xl font-bold">{episode.title}</h1>
 
       <div className="relative mx-auto aspect-[9/16] w-full max-w-xs overflow-hidden rounded-2xl border border-white/10 bg-zinc-900">
-        <SceneVisual scene={scene} timeMs={timeMs} />
+        {scene.visualType === "generated_diagram" && findGeneratedDiagram(sb.generatedDiagrams, scene.generatedDiagramId) ? (
+          <div className="absolute inset-0 flex items-center p-3 pt-24 pb-28" style={{ background: DIAGRAM_BACKGROUND }}>
+            <GeneratedDiagram
+              diagram={findGeneratedDiagram(sb.generatedDiagrams, scene.generatedDiagramId)!}
+              tMs={timeMs}
+              frame={plans[sceneIndex] ? cameraFrameAt(scene, plans[sceneIndex]!, timeMs) : undefined}
+              focusNodeId={scene.focusNodeId}
+            />
+          </div>
+        ) : (
+          <SceneVisual scene={scene} timeMs={timeMs} />
+        )}
         {sceneIndex === 0 && (
           <p className="absolute inset-x-4 top-6 text-center text-xl font-bold drop-shadow">{sb.hookTitle}</p>
         )}
@@ -251,6 +264,14 @@ function Checks({
 }) {
   const tts = (metrics.tts ?? {}) as { verdict?: { ok: boolean; fails: string[]; markCoveragePct?: number } | null; usedFallback?: boolean };
   const unannotated = (metrics.unannotatedTerms as string[] | undefined) ?? [];
+  const generated = metrics.generatedDiagrams as
+    | {
+        proposed: number;
+        kept: number;
+        rejected: number;
+        details?: { ref: string; ok: boolean; unsupportedNodes: string[]; unsupportedEdges: string[] }[];
+      }
+    | undefined;
   const ok = (v: boolean | undefined) => (v === undefined ? "—" : v ? "✅" : "⚠️");
   return (
     <section className="flex flex-col gap-1 rounded-lg border border-white/10 p-4 text-sm">
@@ -267,6 +288,16 @@ function Checks({
         {tts.verdict?.fails.length ? ` — ${tts.verdict.fails.join(", ")}` : ""}
         {tts.usedFallback ? " (repli TTS utilisé)" : ""}
       </p>
+      {generated && (
+        <p>
+          {ok(generated.rejected === 0)} schémas générés : {generated.kept}/{generated.proposed} retenus après vérification de
+          fidélité
+          {generated.details
+            ?.filter((d) => !d.ok)
+            .map((d) => ` — ${d.ref} refusé (${[...d.unsupportedNodes, ...d.unsupportedEdges].join(", ") || "erreur"})`)
+            .join("")}
+        </p>
+      )}
       <p>
         {ok(unannotated.length === 0)} termes non annotés : {unannotated.length ? unannotated.join(", ") : "aucun"}
       </p>

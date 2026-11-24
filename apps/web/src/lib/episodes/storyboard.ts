@@ -3,9 +3,14 @@
  * à partir du script Gemini et de l'horodatage TTS. Module pur, testé dans
  * `storyboard.test.ts`.
  */
+import { computeReveal } from "@/lib/diagrams/reveal";
+import { normalizeRef } from "@/lib/diagrams/spec";
 import type {
   CameraMotion,
+  DiagramLayout,
+  DiagramSpec,
   DisplaySegment,
+  GeneratedDiagram,
   GeneratedStoryboard,
   QuizQuestion,
   StoryboardScene,
@@ -20,6 +25,32 @@ export interface StoryboardDiagram {
   url: string;
   width: number;
   height: number;
+}
+
+/** Schéma généré validé (fidélité) et mis en page (elkjs), prêt à être référencé. */
+export interface PreparedDiagram {
+  spec: DiagramSpec;
+  layout: DiagramLayout;
+}
+
+/** Part de la largeur (ou hauteur) du schéma qu'occupe le nœud cadré, au zoom d'arrivée. */
+export const FOCUS_NODE_SHARE = 0.42;
+export const FOCUS_MAX_SCALE = 1.8;
+
+/**
+ * Caméra d'une scène de schéma généré : vue d'ensemble sans `focusNodeId`,
+ * sinon zoom centré sur le nœud (réutilise `cameraPlans` / `cameraFrameAt`).
+ */
+export function focusCamera(layout: DiagramLayout, focusNodeId: string | undefined): CameraMotion {
+  const box = focusNodeId ? layout.nodes[focusNodeId] : undefined;
+  if (!box) return { fromScale: 1, toScale: 1, focusX: 50, focusY: 50 };
+  const scale = Math.min(FOCUS_NODE_SHARE * (layout.width / box.w), FOCUS_NODE_SHARE * (layout.height / box.h));
+  return {
+    fromScale: 1,
+    toScale: round2(clamp(scale, 1, FOCUS_MAX_SCALE)),
+    focusX: round2(clamp(((box.x + box.w / 2) / layout.width) * 100, 0, 100)),
+    focusY: round2(clamp(((box.y + box.h / 2) / layout.height) * 100, 0, 100)),
+  };
 }
 
 /** Mots par ligne de sous-titres (au plus). */
@@ -127,6 +158,8 @@ export interface BuildStoryboardInput {
   script: EpisodeScript;
   /** Schémas proposés à Gemini, par référence (S1, S2…). */
   diagrams: Map<string, StoryboardDiagram>;
+  /** Schémas générés retenus (fidélité vérifiée, mise en page faite), par référence (G1, G2…). */
+  generatedDiagrams?: Map<string, PreparedDiagram>;
   wordTimings: WordTimestamp[];
   durationMs: number;
   audioUrl: string;
@@ -147,7 +180,9 @@ export function buildStoryboard(input: BuildStoryboardInput): GeneratedStoryboar
     const next = ranges[i + 1];
     const startMs = i === 0 ? 0 : wordTimings[r.start].startMs;
     const endMs = next ? wordTimings[next.start].startMs : input.durationMs;
-    const diagram = s.diagramRef ? input.diagrams.get(s.diagramRef.trim().toUpperCase()) : undefined;
+    const diagram = s.diagramRef ? input.diagrams.get(normalizeRef(s.diagramRef)) : undefined;
+    const generatedRef = s.generatedDiagramRef ? normalizeRef(s.generatedDiagramRef) : undefined;
+    const generated = generatedRef ? input.generatedDiagrams?.get(generatedRef) : undefined;
     const rawComparison = s.comparison
       ? {
           leftTitle: label(s.comparison.leftTitle, 40) ?? "",
@@ -162,6 +197,8 @@ export function buildStoryboard(input: BuildStoryboardInput): GeneratedStoryboar
     // Visuel demandé mais inutilisable (schéma inconnu, comparaison vide) → texte animé.
     let visualType: VisualType = s.visualType;
     if (visualType === "diagram" && !diagram) visualType = "kinetic_text";
+    // Schéma généré absent, refusé par la vérification de fidélité ou sans mise en page → texte animé.
+    if (visualType === "generated_diagram" && !generated) visualType = "kinetic_text";
     if (visualType === "comparison_card" && !comparison) visualType = "kinetic_text";
 
     const scene: StoryboardScene = {
@@ -183,6 +220,16 @@ export function buildStoryboard(input: BuildStoryboardInput): GeneratedStoryboar
         cameraMotion: normalizeCamera(s.camera),
       });
     }
+    if (visualType === "generated_diagram" && generated && generatedRef) {
+      const focus = s.focusNodeId && generated.layout.nodes[s.focusNodeId] ? s.focusNodeId : undefined;
+      Object.assign(scene, {
+        generatedDiagramId: generatedRef,
+        ...(focus ? { focusNodeId: focus } : {}),
+        diagramWidth: generated.layout.width,
+        diagramHeight: generated.layout.height,
+        cameraMotion: focusCamera(generated.layout, focus),
+      });
+    }
     if (visualType === "comparison_card") scene.comparison = comparison;
     if (visualType === "kinetic_text" && !scene.highlightText) {
       // Repli : la première phrase de la scène, en version affichée.
@@ -191,9 +238,22 @@ export function buildStoryboard(input: BuildStoryboardInput): GeneratedStoryboar
     return scene;
   });
 
+  // Schémas générés effectivement montrés : déclarés une fois, apparitions calées sur la voix-off.
+  const generatedDiagrams: GeneratedDiagram[] = [];
+  for (const [ref, prepared] of input.generatedDiagrams ?? []) {
+    const shown = scenes.filter((sc) => sc.generatedDiagramId === ref);
+    if (!shown.length) continue;
+    generatedDiagrams.push({
+      id: ref,
+      spec: prepared.spec,
+      layout: prepared.layout,
+      reveal: computeReveal(prepared.spec, shown, wordTimings),
+    });
+  }
+
   const fullScript = annotatedScript(script.scenes);
   return {
-    version: "1.1",
+    version: generatedDiagrams.length ? "1.2" : "1.1",
     totalDurationMs: input.durationMs,
     hookTitle: label(script.hookTitle, 60) ?? label(script.title, 60) ?? "",
     hookEndMs: hookEndMs(wordTimings, ranges[0]),
@@ -205,5 +265,6 @@ export function buildStoryboard(input: BuildStoryboardInput): GeneratedStoryboar
     scenes,
     wordTimings,
     quiz: shuffleQuiz(script.quiz, input.seed),
+    ...(generatedDiagrams.length ? { generatedDiagrams } : {}),
   };
 }

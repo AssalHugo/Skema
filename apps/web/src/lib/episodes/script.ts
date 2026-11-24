@@ -5,6 +5,14 @@
  * sigle, nombre, unité et exposant (converti en SSML `<sub alias>`, cf. S.3).
  */
 import { z } from "zod";
+import {
+  DIAGRAM_LABEL_MAX,
+  DIAGRAM_NODES,
+  DiagramSpecInput,
+  MAX_GENERATED_DIAGRAMS,
+  diagramSpecIssues,
+  normalizeRef,
+} from "@/lib/diagrams/spec";
 import { countWords } from "@/lib/tts/ssml";
 
 export const SCRIPT_WORDS = { min: 150, max: 210 } as const;
@@ -18,8 +26,16 @@ const Scene = z.object({
     .describe(
       "Texte dit pendant la scène, annoté [affiché|prononcé] pour chaque sigle, nombre, unité, symbole ou exposant",
     ),
-  visualType: z.enum(["diagram", "kinetic_text", "comparison_card"]),
+  visualType: z.enum(["diagram", "generated_diagram", "kinetic_text", "comparison_card"]),
   diagramRef: z.string().nullable().describe("Référence S1, S2… si visualType = diagram, sinon null"),
+  generatedDiagramRef: z
+    .string()
+    .nullish()
+    .describe("Référence G1, G2… d'un schéma de generatedDiagrams si visualType = generated_diagram, sinon null"),
+  focusNodeId: z
+    .string()
+    .nullish()
+    .describe("id du nœud du schéma généré commenté pendant la scène (cadrage), ou null pour la vue d'ensemble"),
   camera: z
     .object({
       fromScale: z.number().describe("Zoom de départ, 1 à 1,3"),
@@ -49,6 +65,11 @@ export const EpisodeScript = z
   .object({
     title: z.string().describe("Titre de la capsule (70 caractères max)"),
     hookTitle: z.string().describe("Accroche affichée à l'écran pendant la première scène (60 caractères max)"),
+    generatedDiagrams: z
+      .array(DiagramSpecInput)
+      .max(MAX_GENERATED_DIAGRAMS)
+      .optional()
+      .describe("Schémas à générer, UNIQUEMENT pour des scènes qu'aucun schéma du cours (S1, S2…) n'illustre ; [] sinon"),
     scenes: z.array(Scene).min(SCENES.min).max(SCENES.max),
     quiz: z.object({
       question: z.string(),
@@ -72,6 +93,23 @@ export const EpisodeScript = z
     if (s.quiz.correctIndex < 0 || s.quiz.correctIndex > 3) {
       ctx.addIssue({ code: "custom", path: ["quiz", "correctIndex"], message: "index hors de 0..3" });
     }
+    // Schémas générés : cohérence interne et références des scènes.
+    const declared = new Map<string, DiagramSpecInput>();
+    (s.generatedDiagrams ?? []).forEach((d, i) => {
+      const ref = normalizeRef(d.ref);
+      if (declared.has(ref)) ctx.addIssue({ code: "custom", path: ["generatedDiagrams", i, "ref"], message: `ref en double : ${ref}` });
+      declared.set(ref, d);
+      for (const message of diagramSpecIssues(d)) ctx.addIssue({ code: "custom", path: ["generatedDiagrams", i], message });
+    });
+    s.scenes.forEach((sc, i) => {
+      if (sc.visualType !== "generated_diagram") return;
+      const d = sc.generatedDiagramRef ? declared.get(normalizeRef(sc.generatedDiagramRef)) : undefined;
+      if (!d) {
+        ctx.addIssue({ code: "custom", path: ["scenes", i, "generatedDiagramRef"], message: "schéma généré non déclaré" });
+      } else if (sc.focusNodeId && !d.nodes.some((n) => n.id === sc.focusNodeId)) {
+        ctx.addIssue({ code: "custom", path: ["scenes", i, "focusNodeId"], message: `nœud inconnu : ${sc.focusNodeId}` });
+      }
+    });
   });
 export type EpisodeScript = z.infer<typeof EpisodeScript>;
 
@@ -114,7 +152,7 @@ export function scriptPrompt(p: ScriptPromptInput): string {
             `- ${d.ref} (p. ${d.pageNumber}${d.attached ? ", image jointe" : ""})${d.caption ? ` « ${d.caption} »` : ""} : ${d.aiDescription}`,
         )
         .join("\n")
-    : "(aucun schéma : utiliser kinetic_text et comparison_card)";
+    : "(aucun schéma du cours : utiliser generated_diagram, kinetic_text et comparison_card)";
   const source = p.sourceText.length
     ? p.sourceText.map((s) => `[page ${s.page}]\n${s.text}`).join("\n\n")
     : "(texte du cours indisponible : s'en tenir strictement au résumé ci-dessus)";
@@ -153,8 +191,20 @@ Annotation de prononciation OBLIGATOIRE dans la narration — syntaxe [affiché|
 Visuels de chaque scène :
 - diagram : diagramRef = une référence de la liste ; camera pointe la zone du schéma commentée à ce moment (focusX/focusY en % depuis le coin haut gauche, fromScale 1 à 1,3, toScale 1 à 2,5) ; calloutLabel nomme l'élément montré ;
 - kinetic_text : highlightText = le mot-clé, la valeur ou la formule à retenir (40 caractères max) ;
+- generated_diagram : schéma 2D construit à partir de la STRUCTURE que tu décris dans generatedDiagrams (voir ci-dessous) ; generatedDiagramRef = sa référence (G1, G2) ; focusNodeId = l'id du nœud commenté à ce moment, ou null pour la vue d'ensemble ;
+- kinetic_text : highlightText = le mot-clé, la valeur ou la formule à retenir (40 caractères max) ;
 - comparison_card : comparison avec 2 colonnes de 2 à 4 éléments courts (ex. procaryote / eucaryote) ;
-- utiliser au moins un schéma s'il y en a ; mettre null dans les champs qui ne concernent pas le visuel choisi.
+- priorité : un schéma du cours (diagram) s'il illustre la scène, sinon un schéma généré si le concept a une structure (voie, cycle, étapes), sinon kinetic_text ou comparison_card ;
+- utiliser au moins un schéma du cours s'il y en a ; mettre null dans les champs qui ne concernent pas le visuel choisi.
+
+Schémas générés (generatedDiagrams, ${MAX_GENERATED_DIAGRAMS} au plus, [] si inutile) — tu décris une structure, le dessin est automatique :
+- à réserver aux concepts qui ont une structure claire ET qu'aucun schéma du cours n'illustre ;
+- template : pathway (flux orienté : glycolyse, cascade de signalisation, transcription → traduction), cycle (boucle fermée : cycle de Krebs, cycle cellulaire ; nœuds dans l'ordre du cycle, liens du nœud i vers le suivant), stages (étapes successives : phases de la mitose, développement) ;
+- ${DIAGRAM_NODES.min} à ${DIAGRAM_NODES.max} nœuds ; id court sans espace ; label = terme EXACT du cours, ${DIAGRAM_LABEL_MAX} caractères au plus, écriture affichée sans crochets (ex. « ATP », « Ca²⁺ ») ;
+- liens (from → to) uniquement entre id déclarés, dans le sens décrit par le cours ; label du lien facultatif (enzyme, réactif), très court ;
+- uniquement des éléments et des relations présents dans le texte du cours : chaque nœud et chaque lien sera vérifié, un seul élément non attesté fait abandonner le schéma ;
+- la narration des scènes qui montrent le schéma doit PRONONCER chaque libellé tel quel, dans l'ordre où il doit apparaître à l'écran ;
+- plusieurs scènes consécutives peuvent montrer le même schéma avec un focusNodeId différent (la caméra glisse d'un nœud à l'autre).
 
 Quiz final (texte simple, sans crochets) : une question sur le point essentiel, 4 choix dont 1 seul correct, distracteurs plausibles et de même longueur, explication en 1 à 2 phrases.`;
 }
