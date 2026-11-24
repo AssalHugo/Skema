@@ -4,7 +4,8 @@
  * production), un schéma de démonstration et un horodatage simulé calé sur un
  * MP3 muet de durée fixe (`public/demo/*.mp3`).
  */
-import { buildStoryboard, type StoryboardDiagram } from "@/lib/episodes/storyboard";
+import { buildStoryboard, type PreparedDiagram, type StoryboardDiagram } from "@/lib/episodes/storyboard";
+import { toDiagramSpec } from "@/lib/diagrams/spec";
 import type { EpisodeScript } from "@/lib/episodes/script";
 import type { FeedItem } from "@/lib/feed/types";
 import type { WordTimestamp } from "@/lib/storyboard/types";
@@ -32,6 +33,37 @@ export function simulateTimings(script: EpisodeScript, durationMs: number): Word
 }
 
 const none = { diagramRef: null, camera: null, calloutLabel: null, highlightText: null, comparison: null };
+
+/** Schéma généré de démonstration (phase 3.5) : structure seule, la mise en page est faite côté serveur. */
+export const DEMO_GENERATED = [
+  {
+    ref: "G1",
+    template: "cycle" as const,
+    title: "Cycle de Krebs",
+    nodes: [
+      { id: "oaa", label: "Oxaloacétate", group: null },
+      { id: "citrate", label: "Citrate", group: null },
+      { id: "isocitrate", label: "Isocitrate", group: null },
+      { id: "akg", label: "α-cétoglutarate", group: null },
+      { id: "succoa", label: "Succinyl-CoA", group: null },
+      { id: "succinate", label: "Succinate", group: null },
+      { id: "fumarate", label: "Fumarate", group: null },
+      { id: "malate", label: "Malate", group: null },
+    ],
+    edges: [
+      { from: "oaa", to: "citrate", label: "+ acétyl-CoA" },
+      { from: "citrate", to: "isocitrate", label: null },
+      { from: "isocitrate", to: "akg", label: "CO₂" },
+      { from: "akg", to: "succoa", label: "CO₂" },
+      { from: "succoa", to: "succinate", label: null },
+      { from: "succinate", to: "fumarate", label: null },
+      { from: "fumarate", to: "malate", label: null },
+      { from: "malate", to: "oaa", label: null },
+    ],
+  },
+];
+
+export const DEMO_GENERATED_SPECS = DEMO_GENERATED.map((d) => ({ ref: d.ref, spec: toDiagramSpec(d) }));
 
 const CAPSULES: { id: string; chapter: string; durationMs: number; audio: string; script: EpisodeScript }[] = [
   {
@@ -193,9 +225,65 @@ const CAPSULES: { id: string; chapter: string; durationMs: number; audio: string
       },
     },
   },
+  {
+    id: "00000000-0000-4000-8000-0000000000a4",
+    chapter: "Chapitre 3 · Métabolisme énergétique",
+    durationMs: 28_000,
+    audio: "/demo/capsule-2.mp3",
+    script: {
+      title: "Le cycle de Krebs",
+      hookTitle: "Huit étapes, un seul tour",
+      generatedDiagrams: DEMO_GENERATED,
+      scenes: [
+        {
+          ...none,
+          narration: "Huit réactions, une seule boucle. Bienvenue dans le cycle de Krebs !",
+          visualType: "kinetic_text",
+          highlightText: "Cycle de Krebs",
+        },
+        {
+          ...none,
+          narration: "L'oxaloacétate capte l'acétyl-CoA et forme le citrate, aussitôt transformé en isocitrate.",
+          visualType: "generated_diagram",
+          generatedDiagramRef: "G1",
+          focusNodeId: null,
+        },
+        {
+          ...none,
+          narration: "Viennent deux décarboxylations : l'α-cétoglutarate, puis le succinyl-CoA. Le [CO₂|cé o deux] part ici.",
+          visualType: "generated_diagram",
+          generatedDiagramRef: "G1",
+          focusNodeId: "akg",
+        },
+        {
+          ...none,
+          narration: "Le succinate devient fumarate, puis malate, et l'oxaloacétate est régénéré.",
+          visualType: "generated_diagram",
+          generatedDiagramRef: "G1",
+          focusNodeId: "malate",
+        },
+        {
+          ...none,
+          narration: "Retiens : chaque tour libère deux [CO₂|cé o deux] et recharge trois [NADH|ène a dé ache].",
+          visualType: "kinetic_text",
+          highlightText: "2 CO₂ · 3 NADH",
+        },
+      ],
+      quiz: {
+        question: "Quelle molécule est régénérée à la fin de chaque tour du cycle de Krebs ?",
+        choices: ["L'oxaloacétate", "Le citrate", "L'acétyl-CoA", "Le pyruvate"],
+        correctIndex: 0,
+        explanation: "Le malate est oxydé en oxaloacétate, qui peut capter un nouvel acétyl-CoA : la boucle est bouclée.",
+      },
+    },
+  },
 ];
 
-export function demoFeed(): FeedItem[] {
+/**
+ * `generated` : schémas générés déjà mis en page (`demo-diagrams.ts`, côté
+ * serveur). Sans eux, leurs scènes passent en texte animé, comme en production.
+ */
+export function demoFeed(generated?: Map<string, PreparedDiagram>): FeedItem[] {
   return CAPSULES.map((c) => ({
     episodeId: c.id,
     title: c.script.title,
@@ -205,6 +293,7 @@ export function demoFeed(): FeedItem[] {
     storyboard: buildStoryboard({
       script: c.script,
       diagrams: new Map([["S1", DIAGRAM]]),
+      generatedDiagrams: generated,
       wordTimings: simulateTimings(c.script, c.durationMs),
       durationMs: c.durationMs,
       audioUrl: c.audio,

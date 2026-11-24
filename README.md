@@ -59,6 +59,34 @@ cd services/gcp-worker && python -m venv .venv && .venv/bin/pip install -r requi
 4. **Better Auth** : `BETTER_AUTH_SECRET=$(openssl rand -base64 32)`. Google OAuth facultatif (redirect URI `<BETTER_AUTH_URL>/api/auth/callback/google`).
 5. **Trigger.dev** : créer le projet, renseigner `TRIGGER_PROJECT_REF` et `TRIGGER_SECRET_KEY`. Dans les variables d'environnement du projet Trigger.dev, recopier `DATABASE_URL`, `R2_*`, `GEMINI_*`, `GCP_WORKER_URL`, `GCP_WORKER_SECRET`, `PDF_EXTRACTOR` et `TTS_*` (les tâches tournent chez Trigger.dev, pas sur Vercel).
 
+## Phase 3.5 — schémas 2D générés
+
+```
+generate-episode (script Gemini QUALITY)
+    ├─ generatedDiagrams : G1, G2 (≤ 2) = STRUCTURE seulement (template pathway | cycle | stages, 2–12 nœuds, liens)
+    │  scènes generated_diagram → generatedDiagramRef + focusNodeId   (priorité : schéma du cours > généré > texte)
+    ├─ prepareGeneratedDiagrams()
+    │    ├─ fidélité (modèle LITE, un appel, ai_usage « episode.diagram-fidelity ») : chaque nœud et lien attesté par le cours
+    │    │  └─ un seul élément non attesté → schéma abandonné, ses scènes passent en kinetic_text
+    │    └─ mise en page elkjs côté serveur (layered pour pathway/stages, cercle fixe pour cycle) → DiagramLayout
+    └─ buildStoryboard() : storyboard 1.2 si un schéma est montré (1.1 sinon)
+         ├─ reveal : chaque nœud apparaît quand son libellé est prononcé (wordTimings), repli uniforme et monotone
+         └─ focusNodeId → cameraMotion (focusX/focusY du nœud) : mêmes cameraPlans / cameraFrameAt que les WebP
+lecteur : GeneratedDiagram({ diagram, frame, tMs }) → <svg>, caméra = viewBox (cameraViewBox), fondu de 250 ms
+```
+
+- **Contrat** : `GeneratedStoryboard` 1.2 (`generatedDiagrams`, scènes `generated_diagram` avec `generatedDiagramId` / `focusNodeId`), rétrocompatible : les capsules 1.1 en base restent lisibles, sans migration.
+- **Modules** : `src/lib/diagrams/` — `spec.ts` (Zod et bornes), `text.ts` (découpe des libellés, partagée serveur/client), `layout.ts` (elkjs, `server-only`, hors bundle PWA), `reveal.ts`, `fidelity.ts`, `prepare.ts` ; composant pur `src/components/player/GeneratedDiagram.tsx`.
+- **Démo** : `/demo`, 4ᵉ capsule « Le cycle de Krebs » (gabarit `cycle`, mise en page au rendu serveur).
+- **Contrôle** : `/episodes/<id>` affiche les schémas générés et le verdict de fidélité (`episodes.metrics.generatedDiagrams`).
+- Exclus : génération d'images, SVG écrit par le LLM, Remotion en lecture.
+
+### Phase 3.5 — critères de fin
+
+- [ ] Sur un chapitre réel, ≥ 80 % des schémas générés passent la vérification de fidélité (`/episodes/<id>`, ligne « schémas générés »)
+- [ ] Aucun chevauchement de libellés à 390 px de large (testé automatiquement sur les trois gabarits ; à confirmer à l'œil sur des cas réels)
+- [ ] Apparitions calées sur la voix-off à 1x et 1,25x
+
 ## Phase 3 — lecteur PWA
 
 ```

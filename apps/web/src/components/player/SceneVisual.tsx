@@ -1,28 +1,60 @@
 "use client";
 import { AnimatePresence, motion } from "framer-motion";
-import { comparisonItemOrder, diagramPanelRatio, sceneProgress } from "@/lib/player/timeline";
-import type { StoryboardScene } from "@/lib/storyboard/types";
-
-/** Élément sur lequel le lecteur peint la caméra à chaque image (hors rendu React). */
-export type CameraTarget = (el: HTMLImageElement | null) => void | (() => void);
+import { type CameraFrame, comparisonItemOrder, diagramPanelRatio, sceneProgress } from "@/lib/player/timeline";
+import type { GeneratedDiagram as Diagram, StoryboardScene } from "@/lib/storyboard/types";
+import { DIAGRAM_BACKGROUND, GeneratedDiagram } from "./GeneratedDiagram";
 
 /**
- * Visuel d'une scène : schéma (caméra peinte par le lecteur via `cameraRef`),
- * texte cinétique ou carte comparative.
+ * Élément sur lequel le lecteur peint la caméra à chaque image (hors rendu
+ * React) : `<img>` d'un schéma du cours (transform CSS) ou `<svg>` d'un schéma
+ * généré (`viewBox`).
+ */
+export type CameraTarget = (el: HTMLImageElement | SVGSVGElement | null) => void | (() => void);
+
+/**
+ * Visuel d'une scène : schéma du cours ou schéma généré (caméra peinte par le
+ * lecteur via `cameraRef`), texte cinétique ou carte comparative.
  */
 export function SceneVisual({
   scene,
   timeMs,
   cameraRef,
   oversample = 1,
+  generatedDiagram,
+  frame,
 }: {
   scene: StoryboardScene;
   timeMs: number;
   cameraRef?: CameraTarget;
   /** Facteur de sur-échantillonnage du schéma (zoom maximal de ses scènes). */
   oversample?: number;
+  /** Schéma généré référencé par la scène (`generatedDiagramId`). */
+  generatedDiagram?: Diagram;
+  /** Cadrage à `timeMs` (schéma généré ; le lecteur le repeint ensuite à chaque image). */
+  frame?: CameraFrame;
 }) {
   const progress = sceneProgress(scene, timeMs);
+
+  if (scene.visualType === "generated_diagram" && generatedDiagram) {
+    const ratio = diagramPanelRatio(generatedDiagram.layout.width, generatedDiagram.layout.height);
+    return (
+      <div className="relative flex h-full w-full items-center justify-center [container-type:size]">
+        <div
+          className="relative overflow-hidden rounded-3xl shadow-[0_20px_60px_-20px_rgba(52,211,153,.35)] ring-1 ring-white/10"
+          style={{ aspectRatio: String(ratio), width: `min(100cqw, calc(100cqh * ${ratio}))`, background: DIAGRAM_BACKGROUND }}
+        >
+          <GeneratedDiagram
+            diagram={generatedDiagram}
+            tMs={timeMs}
+            frame={frame}
+            focusNodeId={scene.focusNodeId}
+            svgRef={cameraRef}
+            idPrefix={`gd-${generatedDiagram.id}-${scene.id}`}
+          />
+        </div>
+      </div>
+    );
+  }
 
   if (scene.visualType === "diagram" && scene.diagramUrl) {
     const ratio = diagramPanelRatio(scene.diagramWidth, scene.diagramHeight);

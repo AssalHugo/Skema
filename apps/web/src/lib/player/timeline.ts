@@ -3,7 +3,14 @@
  * timeline, caméra sur les schémas, état karaoké des mots. Sans dépendance
  * navigateur, testés dans `player.test.ts`.
  */
-import type { CameraMotion, DisplaySegment, StoryboardScene, WordTimestamp } from "@/lib/storyboard/types";
+import type {
+  CameraMotion,
+  DiagramLayout,
+  DisplaySegment,
+  GeneratedDiagram,
+  StoryboardScene,
+  WordTimestamp,
+} from "@/lib/storyboard/types";
 
 /** Dernier élément dont `startMs` ≤ t (recherche dichotomique), ou -1. */
 export function indexAt<T extends { startMs: number }>(items: readonly T[], t: number): number {
@@ -204,7 +211,8 @@ export function cameraPlans(scenes: readonly StoryboardScene[]): (CameraPlan | n
   const plans: (CameraPlan | null)[] = [];
   const oversamples = new Map<string, number>();
   scenes.forEach((s, i) => {
-    if (s.visualType !== "diagram" || !s.diagramUrl) {
+    const key = diagramKey(s);
+    if (!key) {
       plans.push(null);
       return;
     }
@@ -213,17 +221,27 @@ export function cameraPlans(scenes: readonly StoryboardScene[]): (CameraPlan | n
     const prev = scenes[i - 1];
     const prevPlan = plans[i - 1];
     const from =
-      prev && prevPlan && prev.diagramUrl === s.diagramUrl
-        ? cameraFrameAt(prev, prevPlan, prev.endMs)
-        : cameraAt(s.cameraMotion, 0, box);
-    let oversample = oversamples.get(s.diagramUrl);
-    if (oversample === undefined) {
+      prev && prevPlan && diagramKey(prev) === key ? cameraFrameAt(prev, prevPlan, prev.endMs) : cameraAt(s.cameraMotion, 0, box);
+    // Le SVG d'un schéma généré est vectoriel : pas de sur-échantillonnage.
+    let oversample = s.diagramUrl ? oversamples.get(s.diagramUrl) : 1;
+    if (oversample === undefined && s.diagramUrl) {
       oversample = diagramOversample(scenes, s.diagramUrl);
       oversamples.set(s.diagramUrl, oversample);
     }
+    oversample ??= 1;
     plans.push({ from, to, moveMs: moveDuration(from, to), box, oversample });
   });
   return plans;
+}
+
+/**
+ * Identité du schéma montré par une scène (WebP du cours ou schéma généré), ou
+ * null : deux scènes consécutives de même clé partagent un seul travelling.
+ */
+export function diagramKey(scene: StoryboardScene): string | null {
+  if (scene.visualType === "diagram" && scene.diagramUrl) return scene.diagramUrl;
+  if (scene.visualType === "generated_diagram" && scene.generatedDiagramId) return `generated:${scene.generatedDiagramId}`;
+  return null;
 }
 
 /** Zoom maximal atteint sur un schéma (sur-échantillonnage de l'image, borné à 2). */
@@ -240,6 +258,56 @@ export function cameraTransform(frame: CameraFrame, oversample: number): string 
   const s = oversample;
   const r = (v: number) => Math.round(v * 1000) / 1000;
   return `translate(-50%, -50%) translate3d(${r(frame.translateX / s)}%, ${r(frame.translateY / s)}%, 0) scale(${r(frame.scale / s)})`;
+}
+
+/**
+ * `viewBox` du SVG d'un schéma généré pour un cadrage : équivalent vectoriel de
+ * `cameraTransform` (netteté garantie à tout zoom, y compris sur WebKit/iOS).
+ * Le SVG occupe tout son panneau (ratio `diagramPanelRatio`) : le viewBox de
+ * base couvre le panneau, le schéma centré dedans.
+ */
+export function cameraViewBox(frame: CameraFrame, layout: Pick<DiagramLayout, "width" | "height">): string {
+  const ratio = diagramPanelRatio(layout.width, layout.height);
+  const baseW = layout.width / layout.height >= ratio ? layout.width : layout.height * ratio;
+  const baseH = baseW / ratio;
+  const w = baseW / frame.scale;
+  const h = baseH / frame.scale;
+  // Point du panneau affiché au centre : -translate / scale (en % du panneau).
+  const cx = layout.width / 2 - (frame.translateX / frame.scale / 100) * baseW;
+  const cy = layout.height / 2 - (frame.translateY / frame.scale / 100) * baseH;
+  const r = (v: number) => Math.round(v * 100) / 100;
+  return `${r(cx - w / 2)} ${r(cy - h / 2)} ${r(w)} ${r(h)}`;
+}
+
+// ---------------------------------------------------------------------------
+// Schémas générés : apparitions
+// ---------------------------------------------------------------------------
+
+/** Durée du fondu d'apparition d'un nœud ou d'un lien. */
+export const REVEAL_FADE_MS = 250;
+/** Paliers de re-rendu React pendant un fondu (le reste est continu). */
+const REVEAL_STEPS = 8;
+
+/** Progression 0..1 de l'apparition d'un élément (fonction pure de t). */
+export function revealProgress(revealMs: number | undefined, t: number): number {
+  if (revealMs === undefined) return 1;
+  return easeInOutSine((t - revealMs) / REVEAL_FADE_MS);
+}
+
+/** Palier d'apparition de l'ensemble du schéma : change ~8 fois par fondu, constant sinon. */
+export function revealStep(diagram: Pick<GeneratedDiagram, "reveal">, t: number): number {
+  let step = 0;
+  for (const times of [diagram.reveal.nodes, diagram.reveal.edges]) {
+    for (const r of Object.values(times)) step += clamp(Math.floor(((t - r) / REVEAL_FADE_MS) * REVEAL_STEPS) + 1, 0, REVEAL_STEPS + 1);
+  }
+  return step;
+}
+
+export function findGeneratedDiagram(
+  diagrams: readonly GeneratedDiagram[] | undefined,
+  id: string | undefined,
+): GeneratedDiagram | undefined {
+  return id ? diagrams?.find((d) => d.id === id) : undefined;
 }
 
 // ---------------------------------------------------------------------------
@@ -297,13 +365,24 @@ export function hookVisible(hookEndMs: number, t: number): boolean {
  * progression) est peint directement à chaque image, sans re-rendu.
  */
 export function renderKey(
-  sb: { scenes: readonly StoryboardScene[]; wordTimings: readonly WordTimestamp[]; hookEndMs?: number },
+  sb: {
+    scenes: readonly StoryboardScene[];
+    wordTimings: readonly WordTimestamp[];
+    hookEndMs?: number;
+    generatedDiagrams?: readonly GeneratedDiagram[];
+  },
   t: number,
 ): string {
   const w = indexAt(sb.wordTimings, t);
   const wordDone = w >= 0 && t >= sb.wordTimings[w].endMs;
   const si = Math.max(0, indexAt(sb.scenes, t));
-  const step = sb.scenes[si]?.visualType === "comparison_card" ? Math.floor(sceneProgress(sb.scenes[si], t) * 20) : 0;
+  const scene = sb.scenes[si];
+  let step = 0;
+  if (scene?.visualType === "comparison_card") step = Math.floor(sceneProgress(scene, t) * 20);
+  else if (scene?.visualType === "generated_diagram") {
+    const diagram = findGeneratedDiagram(sb.generatedDiagrams, scene.generatedDiagramId);
+    if (diagram) step = revealStep(diagram, t);
+  }
   const hook = sb.hookEndMs !== undefined && hookVisible(sb.hookEndMs, t) ? 1 : 0;
   return `${w}|${wordDone ? 1 : 0}|${si}|${step}|${hook}`;
 }

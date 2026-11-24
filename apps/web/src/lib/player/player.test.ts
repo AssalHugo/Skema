@@ -130,7 +130,7 @@ describe("feed", () => {
 describe("démo /demo", () => {
   it("produit des storyboards valides via buildStoryboard", () => {
     const items = demoFeed();
-    assert.equal(items.length, 3);
+    assert.equal(items.length, 4);
     for (const it of items) {
       const sb = it.storyboard;
       assert.ok(sb.scenes.length >= 4);

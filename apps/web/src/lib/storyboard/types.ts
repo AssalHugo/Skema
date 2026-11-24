@@ -5,6 +5,9 @@
  *
  * Version 1.1 = contrat d'origine (`Architecture PWA Révision Vidéo IA.md`)
  * complété par `displaySegments`, `ssmlWithSub` et `quiz` (plan, phase 2).
+ * Version 1.2 (phase 3.5) = 1.1 + schémas 2D générés (`generatedDiagrams`,
+ * `generated_diagram`). Tous les champs ajoutés sont optionnels : une capsule
+ * 1.1 reste lisible telle quelle.
  */
 
 /** Un mot AFFICHÉ (écriture scientifique exacte : « ATP », « 37 °C »). */
@@ -26,7 +29,59 @@ export interface DisplaySegment {
   sceneIndex: number;
 }
 
-export type VisualType = "diagram" | "kinetic_text" | "comparison_card";
+export type VisualType = "diagram" | "generated_diagram" | "kinetic_text" | "comparison_card";
+
+// ---------------------------------------------------------------------------
+// Schémas 2D générés (phase 3.5) : le LLM fournit la structure, le serveur la
+// mise en page (elkjs) et les instants d'apparition, le lecteur un SVG pur.
+// ---------------------------------------------------------------------------
+
+export type DiagramTemplate = "pathway" | "cycle" | "stages";
+
+export interface DiagramNode {
+  id: string;
+  label: string;
+  group?: string;
+}
+
+export interface DiagramEdge {
+  from: string;
+  to: string;
+  label?: string;
+}
+
+export interface DiagramSpec {
+  template: DiagramTemplate;
+  title?: string;
+  nodes: DiagramNode[];
+  edges: DiagramEdge[];
+}
+
+export interface LayoutBox {
+  x: number;
+  y: number;
+  w: number;
+  h: number;
+}
+
+/** Calculé côté serveur par elkjs, dans le repère du viewBox. */
+export interface DiagramLayout {
+  width: number;
+  height: number;
+  nodes: Record<string, LayoutBox>;
+  /** Clé `edgeKey(from, to)` = "from->to". */
+  edges: Record<string, { points: [number, number][]; label?: LayoutBox }>;
+  /** Bandeau du titre éventuel (en haut du schéma). */
+  title?: LayoutBox;
+}
+
+export interface GeneratedDiagram {
+  id: string;
+  spec: DiagramSpec;
+  layout: DiagramLayout;
+  /** Instants d'apparition (ms), calculés côté serveur à partir de `wordTimings`. */
+  reveal: { nodes: Record<string, number>; edges: Record<string, number> };
+}
 
 export interface CameraMotion {
   fromScale: number;
@@ -58,6 +113,10 @@ export interface StoryboardScene {
   diagramWidth?: number;
   diagramHeight?: number;
   cameraMotion?: CameraMotion;
+  /** 1.2 : schéma généré montré (référence `GeneratedStoryboard.generatedDiagrams`). */
+  generatedDiagramId?: string;
+  /** 1.2 : nœud du schéma généré cadré par la caméra. */
+  focusNodeId?: string;
   calloutLabel?: string;
   highlightText?: string;
   comparison?: ComparisonCard;
@@ -72,7 +131,7 @@ export interface QuizQuestion {
 }
 
 export interface GeneratedStoryboard {
-  version: "1.1";
+  version: "1.1" | "1.2";
   totalDurationMs: number;
   hookTitle: string;
   /** Fin de la première phrase (accroche) : doit rester sous 5 s. */
@@ -87,4 +146,6 @@ export interface GeneratedStoryboard {
   scenes: StoryboardScene[];
   wordTimings: WordTimestamp[];
   quiz: QuizQuestion;
+  /** 1.2 : schémas générés, déclarés une fois et référencés par les scènes. */
+  generatedDiagrams?: GeneratedDiagram[];
 }

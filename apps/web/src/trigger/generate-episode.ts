@@ -6,13 +6,16 @@
  *      accroche < 5 s, 4 à 7 scènes, quiz à 4 choix ;
  *   3. voix-off : `toSsmlUnits()` → gcp-worker /tts (Neural2 + une mark par mot
  *      affiché) → MP3 + horodatage, repli `TTS_FALLBACK` si les seuils de S.3 échouent ;
- *   4. MP3 sur R2, `storyboard_json` assemblé, épisode `ready`.
+ *   4. schémas 2D générés (phase 3.5) : vérification de fidélité (LITE) et
+ *      mise en page elkjs, pour les scènes qu'aucun schéma du cours n'illustre ;
+ *   5. MP3 sur R2, `storyboard_json` assemblé, épisode `ready`.
  * Une seule capsule générée par concept : une relance réutilise la même ligne.
  */
 import { AbortTaskRunError, logger, schemaTask } from "@trigger.dev/sdk";
 import { and, eq, inArray, sql } from "drizzle-orm";
 import { z } from "zod";
 import { generateStructured } from "@/lib/ai/gemini";
+import { prepareGeneratedDiagrams } from "@/lib/diagrams/prepare";
 import { getDb, schema } from "@/lib/db";
 import type { ChapterBatch } from "@/lib/db/schema";
 import { EpisodeScript, SCRIPT_SYSTEM, SCRIPT_WORDS, annotatedScript, scriptPrompt, scriptWordCount } from "@/lib/episodes/script";
@@ -128,19 +131,27 @@ export const generateEpisode = schemaTask({
     const unannotated = findUnannotatedTerms(fullScript);
     if (unannotated.length) logger.warn("Termes non annotés (prononciation à vérifier)", { unannotated });
 
-    // 3. Voix-off et horodatage.
+    // 3. Schémas générés : fidélité au cours puis mise en page (avant la TTS, qui ne dépend pas d'eux).
+    const generated = await prepareGeneratedDiagrams(script.data, { sourceText, summary: concept.summary }, {
+      ...ctx,
+      metadata: { conceptId },
+    });
+    if (generated.metrics.rejected) logger.warn("Schémas générés refusés (repli kinetic_text)", { generated: generated.metrics });
+
+    // 4. Voix-off et horodatage.
     await db.update(episodes).set({ status: "tts", title: script.data.title.slice(0, 160) }).where(eq(episodes.id, episode.id));
     const tts = await abortIfPermanent(() =>
       synthesizeWithFallback({ annotatedText: fullScript }, { task: "episode.tts", ...ctx }),
     );
     if (tts.verdict && !tts.verdict.ok) logger.warn("Seuils de S.3 non respectés", { verdict: tts.verdict, attempts: tts.attempts });
 
-    // 4. MP3 sur R2 (nouvelle clé à chaque génération : cache immuable), storyboard.
+    // 5. MP3 sur R2 (nouvelle clé à chaque génération : cache immuable), storyboard.
     const audioKey = courseKeys.episodeAudio(course.id, episode.id, crypto.randomUUID().slice(0, 8));
     const { url: audioUrl } = await uploadBufferToR2({ key: audioKey, body: tts.audioBuffer, contentType: tts.mimeType });
     const storyboard = buildStoryboard({
       script: script.data,
       diagrams: refs,
+      generatedDiagrams: generated.diagrams,
       wordTimings: tts.wordTimings,
       durationMs: tts.durationMs,
       audioUrl,
@@ -148,13 +159,15 @@ export const generateEpisode = schemaTask({
       seed: episode.id,
     });
 
-    const costUsd = script.costUsd + tts.costUsd;
+    const costUsd = script.costUsd + generated.costUsd + tts.costUsd;
     const metrics = {
       words,
       wordsInRange: words >= SCRIPT_WORDS.min && words <= SCRIPT_WORDS.max,
       scenes: storyboard.scenes.length,
       diagramScenes: storyboard.scenes.filter((s) => s.visualType === "diagram").length,
       diagramsOffered: diagrams.length,
+      generatedDiagramScenes: storyboard.scenes.filter((s) => s.visualType === "generated_diagram").length,
+      generatedDiagrams: generated.metrics,
       sourcePagesText: sourceText.length,
       hookEndMs: storyboard.hookEndMs,
       hookUnder5s: storyboard.hookEndMs <= HOOK_MAX_MS,
@@ -171,7 +184,7 @@ export const generateEpisode = schemaTask({
         latencyMs: tts.latencyMs,
         bytes: tts.audioBuffer.length,
       },
-      costUsd: { script: script.costUsd, tts: tts.costUsd },
+      costUsd: { script: script.costUsd, diagramFidelity: generated.costUsd, tts: tts.costUsd },
     };
 
     await db
