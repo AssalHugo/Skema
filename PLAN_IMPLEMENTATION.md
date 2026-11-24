@@ -131,6 +131,50 @@ Ne sont testées **que** les briques de la stack retenue. Chaque test a des seui
 
 ---
 
+## Phase 3.5 — Schémas 2D générés
+
+**Objectif** : donner un vrai schéma aux concepts qui n'ont **aucune figure exploitable** dans le cours, au lieu d'un simple `kinetic_text`. Le LLM produit une **structure** (nœuds, liens, étapes), jamais un dessin : un moteur déterministe fait la mise en page et le rendu.
+
+**Décisions**
+
+| Sujet | Choix | Pourquoi / garde-fou |
+|---|---|---|
+| Priorité des visuels | Figure du cours (`diagram`) > schéma généré (`generated_diagram`) > `kinetic_text` / `comparison_card` | La figure du professeur reste la référence. On ne génère que si aucun `diagramId` ne convient |
+| Rendu | **SVG** dans le lecteur, mise en page **elkjs** (repli dagre), animation Framer Motion | Vectoriel, zoomable, quelques Ko, 0 € de stockage. Canvas réservé plus tard aux simulations à nombreuses particules |
+| Génération d'images (Imagen, Gemini Image) | **Exclue** | Légendes fausses ou illisibles, anatomie inventée |
+| SVG écrit librement par le LLM | **Exclu** | Chevauchements, résultats non reproductibles |
+| Remotion | **Pas de dépendance** en lecture : on garde notre boucle rAF sur `audio.currentTime` (déverrouillage iOS de la phase 3) | Les composants sont écrits comme des **fonctions pures du temps**, `render(spec, tMs)`, pour pouvoir être enveloppés plus tard dans une composition Remotion (export MP4 à la demande) sans réécriture. Licence Remotion gratuite jusqu'à 3 personnes seulement |
+
+**Étapes**
+
+1. Contrat dans `lib/storyboard/types.ts` (version `1.2`) : `VisualType` gagne `"generated_diagram"`, et `StoryboardScene` gagne `diagramSpec?: DiagramSpec` :
+   ```ts
+   type DiagramTemplate = "pathway" | "cycle" | "stages";
+   interface DiagramSpec {
+     template: DiagramTemplate;
+     title?: string;
+     nodes: { id: string; label: string; group?: string; revealAtMs?: number }[];
+     edges: { from: string; to: string; label?: string; revealAtMs?: number }[];
+     /** Nœud mis en avant par la caméra, à défaut de focusX/focusY. */
+     focusNodeId?: string;
+   }
+   ```
+   Schéma Zod équivalent, avec des bornes : 2 à 12 nœuds, libellés de 40 caractères au maximum, et des `edges` qui ne référencent que des `id` existants.
+2. Trois gabarits seulement pour commencer :
+   - `pathway` : flux orienté (glycolyse, cascade MAPK, transcription → traduction) ;
+   - `cycle` : disposition circulaire (Krebs, cycle cellulaire, Calvin) ;
+   - `stages` : étapes successives (phases de la mitose, développement).
+3. Génération dans `trigger/generate-episode.ts` : pour chaque scène sans `diagramId` pertinent, le modèle QUALITY produit un `diagramSpec`. Les `revealAtMs` sont recalculés côté serveur à partir des `wordTimings` (instant où le libellé est prononcé) plutôt que laissés au LLM.
+4. **Vérification de fidélité** : une seconde passe (modèle LITE) contrôle que chaque nœud et chaque lien sont attestés dans le texte des pages du concept. En cas d'échec, la scène revient à `kinetic_text`. Résultat journalisé dans `ai_usage`.
+5. `components/player/GeneratedDiagram.tsx` : `({ spec, tMs }) => <svg>`, sans état interne lié au temps. Mise en page elkjs calculée **une fois** par spec (mémoïsée), puis apparition progressive des nœuds et liens selon `revealAtMs`. La caméra `focusX`/`focusY` et le zoom de la phase 3 s'appliquent tels quels.
+6. Tests : instantanés SVG des trois gabarits, et test garantissant qu'une même `(spec, tMs)` donne toujours le même rendu.
+
+**Terminé quand** : sur un chapitre réel, au moins 80 % des schémas générés passent la vérification de fidélité, aucun chevauchement de libellés n'apparaît à 390 px de large, et l'animation reste calée sur la voix-off à 1x et 1,25x.
+
+**Extensions possibles si le besoin se confirme** : gabarits `hierarchy` (classification) et `compartments` (cellule et organites en boîtes imbriquées), puis simulations sur Canvas (diffusion, osmose, cinétique enzymatique, potentiel d'action) dont le LLM fixe seulement les paramètres.
+
+---
+
 ## Phase 4 — Moteur 1 : curation YouTube
 
 1. `lib/youtube/channels.json` (~20 chaînes FR/EN avec `uploadsPlaylistId`).
@@ -158,6 +202,29 @@ Ne sont testées **que** les briques de la stack retenue. Chaque test a des seui
 5. Au 01/01/2027 : `GEMINI_MODEL_BULK=gemini-4-hydrogen`.
 
 **Terminé quand** : aucune ressource fixe payante, coûts journalisés, alertes testées.
+
+---
+
+## Phase 6 — Visuels 3D (conditionnelle, reportée)
+
+**À ne lancer que si** la phase 3.5 ne suffit pas. Critères de déclenchement, à constater sur des cours réels après la phase 5 :
+- une part notable des concepts porte sur des **structures spatiales** (repliement de protéines, sites actifs, anatomie, neuroanatomie) que ni les figures du cours ni les gabarits 2D ne rendent correctement ;
+- ou un retour utilisateur explicite en ce sens.
+
+**Principe** : comme en 2D, le LLM choisit des **données réelles** et règle des paramètres, mais n'invente jamais de géométrie.
+
+| Type de visuel | Source | Ordre |
+|---|---|---|
+| `molecule_3d` | PDB, PubChem, AlphaFold DB (identifiant choisi par le LLM, vérifié par appel à l'API de la base), rendu **3Dmol.js** ou **Mol\*** ; ADN/ARN générés de façon procédurale à partir d'une séquence | 1 (meilleur rapport fiabilité / effort) |
+| `anatomy_3d` | BodyParts3D, Z-Anatomy (CC-BY-SA, attribution affichée dans la capsule), NIH 3D ; atlas Allen Brain pour le cerveau. Le LLM choisit un identifiant anatomique et le lecteur met la structure en surbrillance | 2 |
+| `cell_3d` | Petite bibliothèque d'environ 15 modèles glTF faits à la main (organites), pilotée par le LLM | 3, uniquement si 1 et 2 ne couvrent pas le besoin |
+
+**Contraintes mobiles** :
+- **Un seul contexte WebGL actif** : seule la carte visible du feed rend la 3D, les autres affichent une image fixe (poster WebP).
+- **Gestes** : pendant la capsule, la caméra 3D suit la timeline (`render(spec, tMs)` comme en 2D) ; la rotation au doigt n'est disponible que via un bouton « Explorer en 3D » en plein écran, pour ne pas entrer en conflit avec le scroll vertical.
+- **Poids** : Three.js et le moteur moléculaire chargés à la demande, modèles glTF compressés (Draco ou Meshopt) sur R2.
+
+**Terminé quand** : un `molecule_3d` s'affiche et s'anime en moins de 2 s sur un iPhone de milieu de gamme, sans saccade du feed.
 
 ---
 
