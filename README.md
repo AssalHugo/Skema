@@ -59,6 +59,30 @@ cd services/gcp-worker && python -m venv .venv && .venv/bin/pip install -r requi
 4. **Better Auth** : `BETTER_AUTH_SECRET=$(openssl rand -base64 32)`. Google OAuth facultatif (redirect URI `<BETTER_AUTH_URL>/api/auth/callback/google`).
 5. **Trigger.dev** : créer le projet, renseigner `TRIGGER_PROJECT_REF` et `TRIGGER_SECRET_KEY`. Dans les variables d'environnement du projet Trigger.dev, recopier `DATABASE_URL`, `R2_*`, `GEMINI_*`, `GCP_WORKER_URL`, `GCP_WORKER_SECRET`, `PDF_EXTRACTOR` et `TTS_*` (les tâches tournent chez Trigger.dev, pas sur Vercel).
 
+## Phase 3 — lecteur PWA
+
+```
+/feed[?course=<id>][&chapter=<id>]  (capsules prêtes : non terminées d'abord, puis ordre du cours, 60 max)
+  VerticalFeed     100dvh + scroll-snap, 3 cartes montées (active ± 1), un seul <audio> pour la session
+  ├─ « Lancer la session » : 1re lecture dans le geste utilisateur → audio déverrouillé (iOS)
+  ├─ LiveCapsulePlayer : rAF sur audio.currentTime → scène, caméra (zoom + recentrage focusX/focusY), accroche
+  │    vitesse 1 / 1,25 / 1,5 (mémorisée), tap = pause, « Activer le son » si la lecture est refusée
+  ├─ DynamicCaptions : ligne displaySegments, mot courant surligné (wordTimings)
+  └─ QuizOverlay (fin de capsule) ──▶ POST /api/progress { episodeId, watchedPct (max conservé), quizCorrect }
+```
+
+- **Démo sans compte ni base** : `/demo` (faux schéma, 3 capsules passées dans le vrai `buildStoryboard()`, voix-off muette à horodatage simulé). Sert aussi au test iPhone de S.4.
+- **PWA** : `app/manifest.ts` (`standalone`, `portrait`, icônes `public/icons/`), Serwist en mode *configurator* (compatible Turbopack) : `pnpm build` = `next build && serwist build` → `public/sw.js` (non versionné). Service worker désactivé en `next dev`.
+- **Caméra fluide** : un seul travelling continu entre scènes consécutives sur le même schéma (sans fondu ni retour au plan large), durée proportionnelle à la distance, puis dérive lente ; cadrage borné au contenu réel du schéma (jamais les bandes blanches). L'image est chargée ×2 puis réduite (nette au zoom, sans re-rastérisation), et la caméra comme la barre de progression sont peintes à chaque image hors React ; React ne re-rend qu'au changement de mot. `SmoothClock` lisse `currentTime`, qui n'avance que par paliers sur Safari iOS et Firefox.
+- **Calculs purs** : `src/lib/player/timeline.ts` (caméra, horloge lissée, karaoké, virtualisation), testés dans `player.test.ts`.
+- Pas de migration : `user_progress` existe depuis la phase 0 ; `next_review_at` (SM-2) reste pour la phase 5.
+
+### Phase 3 — critères de fin
+
+- [ ] `/demo` sur iPhone (Safari puis PWA installée) : son après « Lancer la session » et après chaque swipe → reporter dans `spikes/RESULTS.md` (S.4)
+- [ ] Lecture de bout en bout sur Android d'un cours importé en phase 1 (`/courses/<id>` → « Réviser ce chapitre »)
+- [ ] Idem sur iPhone
+
 ## Phase 2 — capsules générées (moteur 2)
 
 ```

@@ -2,24 +2,10 @@
 import Link from "next/link";
 import { useEffect, useRef, useState } from "react";
 import type { EpisodeForUser } from "@/lib/episodes/queries";
+import { indexAt } from "@/lib/player/timeline";
 import type { GeneratedStoryboard, StoryboardScene } from "@/lib/storyboard/types";
 
 const RATES = [1, 1.25, 1.5];
-
-/** Dernier élément dont `startMs` ≤ t (recherche dichotomique), ou -1. */
-function indexAt<T extends { startMs: number }>(items: T[], t: number): number {
-  let lo = 0;
-  let hi = items.length - 1;
-  let found = -1;
-  while (lo <= hi) {
-    const mid = (lo + hi) >> 1;
-    if (items[mid].startMs <= t) {
-      found = mid;
-      lo = mid + 1;
-    } else hi = mid - 1;
-  }
-  return found;
-}
 
 export function EpisodePreview({ episode }: { episode: EpisodeForUser }) {
   const sb = episode.storyboard;
@@ -190,6 +176,7 @@ function SceneVisual({ scene, timeMs }: { scene: StoryboardScene; timeMs: number
         {/* eslint-disable-next-line @next/next/no-img-element -- WebP déjà optimisé sur R2 */}
         <img
           src={scene.diagramUrl}
+          crossOrigin="anonymous"
           alt={scene.calloutLabel ?? "Schéma du cours"}
           className="max-h-full max-w-full object-contain"
           style={{ transform: `scale(${scale})`, transformOrigin: `${cam.focusX}% ${cam.focusY}%` }}

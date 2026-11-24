@@ -36,7 +36,10 @@ async function UserStatus() {
       <p>
         Connecté en tant que <strong>{session.user.email}</strong>
       </p>
-      <Link href="/upload" className="rounded-lg bg-accent px-4 py-3 text-center font-semibold text-black">
+      <Link href="/feed" className="rounded-lg bg-accent px-4 py-3 text-center font-semibold text-black">
+        ▶ Réviser mes capsules
+      </Link>
+      <Link href="/upload" className="rounded-lg border border-white/20 px-4 py-3 text-center font-semibold">
         Importer un cours
       </Link>
       {courses.length > 0 && (

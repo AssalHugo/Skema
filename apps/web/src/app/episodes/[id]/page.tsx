@@ -10,7 +10,7 @@ export const metadata = { title: "Capsule · Skema" };
 /**
  * Aperçu de contrôle d'une capsule générée (phase 2) : prononciation, calage
  * des sous-titres à 1x / 1,25x / 1,5x, visuels et métriques. Le lecteur du
- * feed vertical arrive en phase 3.
+ * feed vertical est `/feed` (phase 3).
  */
 export default function EpisodePage({ params }: PageProps<"/episodes/[id]">) {
   return (
