@@ -8,6 +8,7 @@ import {
   cameraFrameAt,
   cameraPlans,
   captionAt,
+  comparisonItemOrder,
   diagramContentBox,
   diagramOversample,
   easeInOut,
@@ -106,6 +107,23 @@ describe("feed", () => {
     assert.equal(watchedPct(30_000, 60_000), 50);
     assert.equal(watchedPct(90_000, 60_000), 100);
     assert.equal(watchedPct(10, 0), 0);
+  });
+  it("comparisonItemOrder alterne puis écoule la colonne la plus longue", () => {
+    // 2 items à gauche, 3 à droite → rangs 0..4 sans trou ni débordement.
+    assert.deepEqual(
+      [0, 1].map((k) => comparisonItemOrder(0, k, 2, 3)),
+      [0, 2],
+    );
+    assert.deepEqual(
+      [0, 1, 2].map((k) => comparisonItemOrder(1, k, 2, 3)),
+      [1, 3, 4],
+    );
+    // 4 items à gauche, 1 à droite → rangs 0..4.
+    assert.deepEqual(
+      [0, 1, 2, 3].map((k) => comparisonItemOrder(0, k, 4, 1)),
+      [0, 2, 3, 4],
+    );
+    assert.deepEqual([comparisonItemOrder(1, 0, 4, 1)], [1]);
   });
 });
 

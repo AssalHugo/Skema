@@ -55,9 +55,9 @@ export function LiveCapsulePlayer({
   const [timeMs, setTimeMs] = useState(0);
   const [playing, setPlaying] = useState(false);
   const [ended, setEnded] = useState(false);
-  const [blocked, setBlocked] = useState(false);
+  const [audioError, setAudioError] = useState<"blocked" | "failed" | null>(null);
   const maxTimeRef = useRef(0);
-  const lastReportedPctRef = useRef(0);
+  const lastReportedPctRef = useRef(item.progress?.watchedPct ?? 0);
   /** Temps lissé de l'image courante (peinture directe, sans re-rendu). */
   const timeRef = useRef(0);
   const renderKeyRef = useRef("");
@@ -124,6 +124,7 @@ export function LiveCapsulePlayer({
       audio.currentTime = 0;
       clock.reset(0);
     }
+    audio.defaultPlaybackRate = rate;
     audio.playbackRate = rate;
     const flushProgress = () => {
       const pct = watchedPct(maxTimeRef.current, sb.totalDurationMs);
@@ -136,7 +137,7 @@ export function LiveCapsulePlayer({
       if (cancelled) return;
       setPlaying(true);
       setEnded(false);
-      setBlocked(false);
+      setAudioError(null);
     };
     const onPause = () => {
       if (cancelled) return;
@@ -168,7 +169,7 @@ export function LiveCapsulePlayer({
     audio.play().then(onPlay, (err: unknown) => {
       if (cancelled) return;
       if (err instanceof DOMException && err.name === "AbortError") return;
-      setBlocked(true);
+      setAudioError(err instanceof DOMException && err.name === "NotAllowedError" ? "blocked" : "failed");
     });
     if ("mediaSession" in navigator) {
       navigator.mediaSession.metadata = new MediaMetadata({ title: item.title, artist: item.courseTitle, album: "Skema" });
@@ -182,7 +183,7 @@ export function LiveCapsulePlayer({
       document.removeEventListener("visibilitychange", onVisibilityChange);
       audio.pause();
       setPlaying(false);
-      setBlocked(false);
+      setAudioError(null);
       setEnded(false);
       clock.reset(0);
       showTime(0);
@@ -194,7 +195,10 @@ export function LiveCapsulePlayer({
 
   useEffect(() => {
     const audio = audioRef.current;
-    if (active && audio) audio.playbackRate = rate;
+    if (active && audio) {
+      audio.defaultPlaybackRate = rate;
+      audio.playbackRate = rate;
+    }
   }, [active, audioRef, rate]);
 
   // Horloge : rAF sur currentTime lissé. Caméra et progression sont peintes à
@@ -220,27 +224,37 @@ export function LiveCapsulePlayer({
     return () => cancelAnimationFrame(frame);
   }, [active, playing, audioRef, clock, paint, sb]);
 
+  function handlePlayError(err: unknown) {
+    if (err instanceof DOMException && err.name === "AbortError") return;
+    setAudioError(err instanceof DOMException && err.name === "NotAllowedError" ? "blocked" : "failed");
+  }
+
   function togglePlay() {
     const audio = audioRef.current;
     if (!audio || !active || ended) return;
-    if (audio.paused) audio.play().catch(() => setBlocked(true));
+    if (audio.paused) audio.play().catch(handlePlayError);
     else audio.pause();
   }
 
   function replay() {
     const audio = audioRef.current;
     if (!audio) return;
+    const shouldReload = audioError === "failed";
     setEnded(false);
+    setAudioError(null);
+    if (shouldReload) audio.load();
     audio.currentTime = 0;
+    audio.defaultPlaybackRate = rate;
+    audio.playbackRate = rate;
     clock.reset(0);
     showTime(0);
-    audio.play().catch(() => setBlocked(true));
+    audio.play().catch(handlePlayError);
   }
 
   const sceneIndex = Math.max(0, indexAt(sb.scenes, timeMs));
   const scene = sb.scenes[sceneIndex];
   const showHook = hookVisible(sb.hookEndMs, timeMs);
-  const paused = started && active && !playing && !ended && !blocked;
+  const paused = started && active && !playing && !ended && !audioError;
 
   return (
     <div className="relative flex h-full w-full select-none flex-col overflow-hidden bg-[radial-gradient(120%_80%_at_50%_0%,#15241f_0%,#0a0a0a_60%)]" onClick={togglePlay}>
@@ -345,7 +359,7 @@ export function LiveCapsulePlayer({
         )}
       </AnimatePresence>
 
-      {blocked && active && (
+      {audioError && active && (
         <button
           type="button"
           onClick={(e) => {
@@ -354,7 +368,7 @@ export function LiveCapsulePlayer({
           }}
           className="absolute inset-x-8 bottom-1/3 z-20 rounded-2xl bg-accent py-4 font-bold text-black shadow-xl"
         >
-          🔊 Activer le son
+          {audioError === "blocked" ? "🔊 Activer le son" : "↻ Réessayer le chargement audio"}
         </button>
       )}
 

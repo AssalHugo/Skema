@@ -1,6 +1,6 @@
 "use client";
 import { AnimatePresence, motion } from "framer-motion";
-import { diagramPanelRatio, sceneProgress } from "@/lib/player/timeline";
+import { comparisonItemOrder, diagramPanelRatio, sceneProgress } from "@/lib/player/timeline";
 import type { StoryboardScene } from "@/lib/storyboard/types";
 
 /** Élément sur lequel le lecteur peint la caméra à chaque image (hors rendu React). */
@@ -85,7 +85,7 @@ export function SceneVisual({
             <p className="text-base font-black uppercase tracking-wide">{title}</p>
             <ul className="flex flex-col gap-2 text-[0.9rem] leading-snug text-white">
               {items.map((it, k) => {
-                const visible = (col === 0 ? k * 2 : k * 2 + 1) < Math.max(1, shown);
+                const visible = comparisonItemOrder(col as 0 | 1, k, c.leftItems.length, c.rightItems.length) < Math.max(1, shown);
                 return (
                   <motion.li
                     key={`${col}-${k}`}

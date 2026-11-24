@@ -22,13 +22,16 @@ async function FeedSection({ searchParams }: { searchParams: PageProps<"/feed">[
   const session = await getSession();
   if (!session) redirect("/login");
   const raw = await searchParams;
-  const course = typeof raw.course === "string" ? Uuid.safeParse(raw.course) : null;
-  const chapter = typeof raw.chapter === "string" ? Uuid.safeParse(raw.chapter) : null;
+  const courseParam = typeof raw.course === "string" && raw.course.length > 0 ? raw.course : null;
+  const chapterParam = typeof raw.chapter === "string" && raw.chapter.length > 0 ? raw.chapter : null;
+  const course = courseParam ? Uuid.safeParse(courseParam) : null;
+  const chapter = chapterParam ? Uuid.safeParse(chapterParam) : null;
+  const invalidFilter = (course !== null && !course.success) || (chapter !== null && !chapter.success);
   const filter = {
     courseId: course?.success ? course.data : undefined,
     chapterId: chapter?.success ? chapter.data : undefined,
   };
-  const items = await getFeedForUser(session.user.id, filter);
+  const items = invalidFilter ? [] : await getFeedForUser(session.user.id, filter);
   const title = filter.chapterId
     ? (items[0]?.chapterTitle ?? "Chapitre")
     : filter.courseId

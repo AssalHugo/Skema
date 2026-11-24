@@ -176,6 +176,7 @@ function SceneVisual({ scene, timeMs }: { scene: StoryboardScene; timeMs: number
         {/* eslint-disable-next-line @next/next/no-img-element -- WebP déjà optimisé sur R2 */}
         <img
           src={scene.diagramUrl}
+          crossOrigin="anonymous"
           alt={scene.calloutLabel ?? "Schéma du cours"}
           className="max-h-full max-w-full object-contain"
           style={{ transform: `scale(${scale})`, transformOrigin: `${cam.focusX}% ${cam.focusY}%` }}

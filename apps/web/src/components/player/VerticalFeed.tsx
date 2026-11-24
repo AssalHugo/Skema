@@ -84,8 +84,12 @@ export function VerticalFeed({
     const onScroll = () => {
       cancelAnimationFrame(frame);
       frame = requestAnimationFrame(() => {
-        const i = Math.round(el.scrollTop / Math.max(1, el.clientHeight));
-        setActive(Math.min(items.length - 1, Math.max(0, i)));
+        const pos = el.scrollTop / Math.max(1, el.clientHeight);
+        const nearest = Math.round(pos);
+        // La carte ne devient active qu'à ≥ 75 % visible : évite de relancer la capsule sur un swipe avorté.
+        if (Math.abs(pos - nearest) <= 0.25) {
+          setActive(Math.min(items.length - 1, Math.max(0, nearest)));
+        }
       });
     };
     el.addEventListener("scroll", onScroll, { passive: true });
@@ -122,6 +126,7 @@ export function VerticalFeed({
     // Déverrouillage iOS : la première lecture doit partir du geste utilisateur.
     audio.src = new URL(items[active].storyboard.audioUrl, window.location.href).href;
     audio.currentTime = 0;
+    audio.defaultPlaybackRate = rate;
     audio.playbackRate = rate;
     try {
       await audio.play();

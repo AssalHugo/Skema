@@ -132,6 +132,16 @@ export function mountedWindow(active: number, count: number, radius = 1): { from
   return { from: Math.max(0, active - radius), to: Math.min(count - 1, active + radius) };
 }
 
+/**
+ * Rang d'apparition (0..leftLen + rightLen - 1) de l'élément `index` dans la
+ * colonne `col` (0 = gauche, 1 = droite) d'une `comparison_card` : alterne
+ * gauche/droite puis écoule le surplus de la colonne la plus longue.
+ */
+export function comparisonItemOrder(col: 0 | 1, index: number, leftLen: number, rightLen: number): number {
+  const common = Math.min(leftLen, rightLen);
+  return index < common ? index * 2 + col : common + index;
+}
+
 // ---------------------------------------------------------------------------
 // Caméra continue entre scènes
 // ---------------------------------------------------------------------------
