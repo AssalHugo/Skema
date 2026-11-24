@@ -140,34 +140,60 @@ Ne sont testées **que** les briques de la stack retenue. Chaque test a des seui
 | Sujet | Choix | Pourquoi / garde-fou |
 |---|---|---|
 | Priorité des visuels | Figure du cours (`diagram`) > schéma généré (`generated_diagram`) > `kinetic_text` / `comparison_card` | La figure du professeur reste la référence. On ne génère que si aucun `diagramId` ne convient |
-| Rendu | **SVG** dans le lecteur, mise en page **elkjs** (repli dagre), animation Framer Motion | Vectoriel, zoomable, quelques Ko, 0 € de stockage. Canvas réservé plus tard aux simulations à nombreuses particules |
+| Rendu | **SVG inline** dans le lecteur, apparitions calculées à partir de `tMs` (pas d'animation Framer Motion déclarative `initial`/`animate`/`delay`) | Seul un rendu dérivé de `tMs` suit la pause, le déplacement dans la timeline, les vitesses 1,25x / 1,5x et un futur export Remotion |
+| Mise en page | **elkjs côté serveur**, dans `trigger/generate-episode.ts`, au moment d'assembler le storyboard. Les coordonnées sont stockées avec le schéma (`DiagramLayout`) | elkjs est asynchrone et pèse ~1,4 Mo : hors du bundle PWA, le composant reste synchrone, pur et instantané. Une mise en page figée en base est aussi reproductible d'une lecture à l'autre |
 | Génération d'images (Imagen, Gemini Image) | **Exclue** | Légendes fausses ou illisibles, anatomie inventée |
 | SVG écrit librement par le LLM | **Exclu** | Chevauchements, résultats non reproductibles |
-| Remotion | **Pas de dépendance** en lecture : on garde notre boucle rAF sur `audio.currentTime` (déverrouillage iOS de la phase 3) | Les composants sont écrits comme des **fonctions pures du temps**, `render(spec, tMs)`, pour pouvoir être enveloppés plus tard dans une composition Remotion (export MP4 à la demande) sans réécriture. Licence Remotion gratuite jusqu'à 3 personnes seulement |
+| Remotion | **Pas de dépendance** en lecture : on garde notre boucle rAF sur `audio.currentTime` (déverrouillage iOS de la phase 3) | Les composants sont des **fonctions pures du temps**, `GeneratedDiagram({ diagram, frame, tMs })`, pour pouvoir être enveloppés plus tard dans une composition Remotion (export MP4 à la demande) sans réécriture. Licence Remotion gratuite jusqu'à 3 personnes seulement |
 
 **Étapes**
 
-1. Contrat dans `lib/storyboard/types.ts` (version `1.2`) : `VisualType` gagne `"generated_diagram"`, et `StoryboardScene` gagne `diagramSpec?: DiagramSpec` :
+1. **Contrat** dans `apps/web/src/lib/storyboard/types.ts`, version `1.2`, **rétrocompatible** :
+   - `GeneratedStoryboard.version: "1.1" | "1.2"` ; tous les champs ajoutés sont optionnels, donc une capsule `1.1` déjà en base reste lisible sans migration. `apps/web/src/lib/episodes/storyboard.ts` écrit `1.2` dès qu'il produit un schéma généré, `1.1` sinon ;
+   - `VisualType` gagne `"generated_diagram"` ;
+   - les schémas sont **déclarés une fois au niveau de l'épisode** et **référencés par les scènes**, comme les WebP du cours. Plusieurs scènes consécutives partagent ainsi un même schéma (un seul appel LLM, continuité de la caméra) avec un cadrage différent par scène :
    ```ts
    type DiagramTemplate = "pathway" | "cycle" | "stages";
    interface DiagramSpec {
      template: DiagramTemplate;
      title?: string;
-     nodes: { id: string; label: string; group?: string; revealAtMs?: number }[];
-     edges: { from: string; to: string; label?: string; revealAtMs?: number }[];
-     /** Nœud mis en avant par la caméra, à défaut de focusX/focusY. */
-     focusNodeId?: string;
+     nodes: { id: string; label: string; group?: string }[];
+     edges: { from: string; to: string; label?: string }[];
    }
+   /** Calculé côté serveur par elkjs, dans le repère du viewBox. */
+   interface DiagramLayout {
+     width: number;
+     height: number;
+     nodes: Record<string, { x: number; y: number; w: number; h: number }>;
+     edges: Record<string, { points: [number, number][] }>; // clé "from->to"
+   }
+   interface GeneratedDiagram {
+     id: string;
+     spec: DiagramSpec;
+     layout: DiagramLayout;
+     /** Instants d'apparition, recalculés côté serveur (étape 4). */
+     reveal: { nodes: Record<string, number>; edges: Record<string, number> };
+   }
+   // GeneratedStoryboard (1.2) : generatedDiagrams?: GeneratedDiagram[]
+   // StoryboardScene (1.2)     : generatedDiagramId?: string; focusNodeId?: string
    ```
-   Schéma Zod équivalent, avec des bornes : 2 à 12 nœuds, libellés de 40 caractères au maximum, et des `edges` qui ne référencent que des `id` existants.
-2. Trois gabarits seulement pour commencer :
+   Schéma Zod équivalent, avec des bornes : 2 à 12 nœuds, libellés de 40 caractères au maximum, `edges` et `focusNodeId` qui ne référencent que des `id` existants, `generatedDiagramId` qui référence un schéma déclaré.
+2. Trois gabarits seulement pour commencer, chacun traduit en options elkjs (`layered` pour `pathway` et `stages`, positions circulaires fixées pour `cycle`) :
    - `pathway` : flux orienté (glycolyse, cascade MAPK, transcription → traduction) ;
    - `cycle` : disposition circulaire (Krebs, cycle cellulaire, Calvin) ;
    - `stages` : étapes successives (phases de la mitose, développement).
-3. Génération dans `trigger/generate-episode.ts` : pour chaque scène sans `diagramId` pertinent, le modèle QUALITY produit un `diagramSpec`. Les `revealAtMs` sont recalculés côté serveur à partir des `wordTimings` (instant où le libellé est prononcé) plutôt que laissés au LLM.
-4. **Vérification de fidélité** : une seconde passe (modèle LITE) contrôle que chaque nœud et chaque lien sont attestés dans le texte des pages du concept. En cas d'échec, la scène revient à `kinetic_text`. Résultat journalisé dans `ai_usage`.
-5. `components/player/GeneratedDiagram.tsx` : `({ spec, tMs }) => <svg>`, sans état interne lié au temps. Mise en page elkjs calculée **une fois** par spec (mémoïsée), puis apparition progressive des nœuds et liens selon `revealAtMs`. La caméra `focusX`/`focusY` et le zoom de la phase 3 s'appliquent tels quels.
-6. Tests : instantanés SVG des trois gabarits, et test garantissant qu'une même `(spec, tMs)` donne toujours le même rendu.
+3. **Génération** dans `apps/web/src/trigger/generate-episode.ts` : le modèle QUALITY propose, pour les scènes sans `diagramId` pertinent, un ou plusieurs `DiagramSpec` partagés et, pour chaque scène, `generatedDiagramId` + `focusNodeId`. Le serveur calcule ensuite la mise en page elkjs.
+4. **Instants d'apparition**, calculés côté serveur et jamais laissés au LLM :
+   - recherche du libellé de chaque nœud dans les `wordTimings` de la scène où il apparaît pour la première fois, après normalisation (casse, accents, ponctuation, forme affichée de l'annotation `[affiché|prononcé]`) ; un lien apparaît avec le dernier de ses deux nœuds ;
+   - **repli déterministe** si un libellé n'est pas retrouvé : les éléments non placés sont répartis uniformément sur `[scene.startMs, scene.endMs]`, dans l'ordre des `nodes`, en restant monotones par rapport aux éléments déjà placés.
+5. **Caméra** : `focusNodeId` est converti côté serveur en `cameraMotion.focusX`/`focusY` à partir du centre du nœud dans `DiagramLayout`, ce qui réutilise tel quel `cameraPlans` / `cameraFrameAt` de `apps/web/src/lib/player/timeline.ts` (les plans sont indexés par `generatedDiagramId` au lieu de `diagramUrl`). Pour le rendu, la caméra **anime le `viewBox`** du SVG au lieu d'une transformation CSS : netteté vectorielle garantie sur WebKit/iOS, sans `oversample`. Dans `LiveCapsulePlayer.tsx` et `SceneVisual.tsx`, `CameraTarget` est généralisé (`HTMLImageElement | SVGSVGElement`), et `paint()` choisit entre `cameraTransform` (WebP) et un nouveau `cameraViewBox(frame, layout)` (SVG).
+6. **Vérification de fidélité** : une seconde passe (modèle LITE) contrôle que chaque nœud et chaque lien sont attestés dans le texte des pages du concept. En cas d'échec, les scènes qui référencent ce schéma reviennent à `kinetic_text`. Résultat journalisé dans `ai_usage`.
+7. `apps/web/src/components/player/GeneratedDiagram.tsx` : `({ diagram, frame, tMs }) => <svg>`, synchrone, sans état interne lié au temps ni dépendance à elkjs. Opacité de chaque élément = fonction de `tMs - reveal` (fondu court, ~250 ms) ; aucune animation déclarative.
+8. Tests (`node:test`, comme `apps/web/src/lib/player/player.test.ts`) :
+   - mise en page des trois gabarits et absence de chevauchement des boîtes de libellés ;
+   - même `(diagram, frame, tMs)` → même SVG, et rendu identique que `tMs` soit atteint en lecture continue ou par saut ;
+   - repli des instants d'apparition quand un libellé est introuvable ;
+   - lecture d'un storyboard `1.1` existant par le lecteur `1.2`.
 
 **Terminé quand** : sur un chapitre réel, au moins 80 % des schémas générés passent la vérification de fidélité, aucun chevauchement de libellés n'apparaît à 390 px de large, et l'animation reste calée sur la voix-off à 1x et 1,25x.
 
@@ -223,8 +249,9 @@ Ne sont testées **que** les briques de la stack retenue. Chaque test a des seui
 - **Un seul contexte WebGL actif** : seule la carte visible du feed rend la 3D, les autres affichent une image fixe (poster WebP).
 - **Gestes** : pendant la capsule, la caméra 3D suit la timeline (`render(spec, tMs)` comme en 2D) ; la rotation au doigt n'est disponible que via un bouton « Explorer en 3D » en plein écran, pour ne pas entrer en conflit avec le scroll vertical.
 - **Poids** : Three.js et le moteur moléculaire chargés à la demande, modèles glTF compressés (Draco ou Meshopt) sur R2.
+- **Préchargement** : quand la carte `index` est active, la carte `index + 1` télécharge déjà le code et le modèle (sans créer de contexte WebGL, pour respecter la limite d'un contexte actif), afin de tenir l'objectif de moins de 2 s en 4G.
 
-**Terminé quand** : un `molecule_3d` s'affiche et s'anime en moins de 2 s sur un iPhone de milieu de gamme, sans saccade du feed.
+**Terminé quand** : un `molecule_3d` s'affiche et s'anime en moins de 2 s en 4G sur un iPhone de milieu de gamme, sans saccade du feed.
 
 ---
 
